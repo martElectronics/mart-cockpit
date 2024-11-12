@@ -99,17 +99,18 @@ bool stsTSON, stsStart, stsR2D, stsAPPS;
 int stsBrake;
 int cfgBrakeTH=3300, cfgChannelAPPS1 = 0, cfgChannelAPPS2 = 1, cfgChannelBrake = 2, cfgChannelSteering = 3;
 int cfgAPPSdiff = 10, cfgAPPSdesc = 5000, cfgAPPSdescScaled = 200, cfgAPPSmax = 0, cfgTimeSoundR2D = 1100;
-float cfgAPPSMargin = 0.05;
+float cfgAPPSMargin = 0.1;
 unsigned long int tA = millis();
 
 void configureAPPS()
 {
-  apps1Data.valAnalogUP = 12270;
-  apps1Data.valAnalogDOWN = 11050;
-  apps2Data.valAnalogUP = 12320;
-  apps2Data.valAnalogDOWN = 10920;
-  apps1Data.valScaledUP = apps2Data.valScaledUP = 100;
-  apps1Data.range = apps2Data.range = 1500;
+  apps1Data.valAnalogUP = 23610;
+  apps1Data.valAnalogDOWN = 23200;
+  apps2Data.valAnalogUP = 12950;
+  apps2Data.valAnalogDOWN = 12400;
+  apps1Data.valScaledUP = apps2Data.valScaledUP = 550;
+  apps1Data.range = 600;
+  apps2Data.range = 950;
   apps1Data.valScaledDOWN = apps2Data.valScaledDOWN = 0;
 }
 
@@ -166,6 +167,10 @@ void loop()
   apps1Data.valAnalog = ads.readADC_SingleEnded(0);
   apps2Data.valAnalog = ads.readADC_SingleEnded(1);
   stsBrake = ads.readADC_SingleEnded(3);
+  //------------------------------------
+  delay(1000);
+  Serial.println(ads.readADC_SingleEnded(0));
+  Serial.println(ads.readADC_SingleEnded(1));
        
   //****PROCESAMIENTO
   apps1Data.valScaled =
@@ -173,6 +178,10 @@ void loop()
 
   apps2Data.valScaled =
       map(apps2Data.valAnalog, apps2Data.valAnalogUP - apps2Data.range * cfgAPPSMargin, apps2Data.valAnalogDOWN + apps2Data.range * cfgAPPSMargin, apps2Data.valScaledDOWN, apps2Data.valScaledUP);
+
+  //------------------------------------
+  Serial.println(apps1Data.valScaled);
+  Serial.println(apps2Data.valScaled);
 
   stsR2D = R2D(stsTSON, stsStart, (stsBrake >= cfgBrakeTH));
   stsAPPS = apps(apps1Data.valScaled, apps2Data.valScaled, cfgAPPSdiff, cfgAPPSmax, cfgAPPSdescScaled);
