@@ -69,9 +69,9 @@ int cfgCurrent = 10,          // 1
     cfgCurrentRel,            // 5
     cfgCurrentRelBrake,       // 6
     cfgDO,                    // 7
-    cfgCurrentACMAX = 100,     // 8
+    cfgCurrentACMAX = 100,    // 8
     cfgCurrentACBrakeMAX = 0, // 9
-    cfgCurrentDCMAX = 100,     // 10
+    cfgCurrentDCMAX = 100,    // 10
     cfgCurrentDCBrakeMAX = 0, // 11
     cfgDriveEnable = 0;       // 12
 
@@ -97,7 +97,7 @@ bool flagBot;
 int stepindexGlobal = 0;
 bool stsTSON, stsStart, stsR2D, stsAPPS;
 int stsBrake;
-int cfgBrakeTH=3300, cfgChannelAPPS1 = 0, cfgChannelAPPS2 = 1, cfgChannelBrake = 2, cfgChannelSteering = 3;
+int cfgBrakeTH = 3300, cfgChannelAPPS1 = 0, cfgChannelAPPS2 = 1, cfgChannelBrake = 2, cfgChannelSteering = 3;
 int cfgAPPSdiff = 10, cfgAPPSdesc = 5000, cfgAPPSdescScaled = 200, cfgAPPSmax = 0, cfgTimeSoundR2D = 1100;
 float cfgAPPSMargin = 0.1;
 unsigned long int tA = millis();
@@ -122,13 +122,10 @@ void setup()
   pinMode(pinStart, INPUT);
   pinMode(pinTSON, INPUT);
   pinMode(pinBUZZ, OUTPUT);
-  //pinMode(pinBUZZ, INPUT);
-  //
-
-  parseConfigIds(packetIDStoConfig);
-  fillConfigsArray();
 
   // INIT
+  parseConfigIds(packetIDStoConfig);
+  fillConfigsArray();
 
   for (int i = 1; i < 8; i++)
   {
@@ -150,7 +147,7 @@ void setup()
     while (1)
       ;
   }
-//ads.setDataRate(RATE_ADS1115_860SPS);
+  // ads.setDataRate(RATE_ADS1115_860SPS);
 }
 
 void loop()
@@ -159,46 +156,43 @@ void loop()
 
   //****LECTURA
   CAN.receive();
-  stsTSON = digitalRead(pinTSON); //cambiado por logica
+  stsTSON = digitalRead(pinTSON); // cambiado por logica
   stsStart = !digitalRead(pinStart);
-  
+
   // stsBrake=ads.readADC_SingleEnded(cfgChannelSteering);
-  //stsBrake = cfgBrakeTH ;
+  // stsBrake = cfgBrakeTH ;
   apps1Data.valAnalog = ads.readADC_SingleEnded(0);
   apps2Data.valAnalog = ads.readADC_SingleEnded(1);
   stsBrake = ads.readADC_SingleEnded(3);
-  //------------------------------------
-  //delay(1000);
-  // Serial.println(ads.readADC_SingleEnded(0));
-  // Serial.println(ads.readADC_SingleEnded(1));
-       
+
   //****PROCESAMIENTO
+  // APPS
   apps1Data.valScaled =
       map(apps1Data.valAnalog, apps1Data.valAnalogUP - apps1Data.range * cfgAPPSMargin, apps1Data.valAnalogDOWN + apps1Data.range * cfgAPPSMargin, apps1Data.valScaledDOWN, apps1Data.valScaledUP);
 
   apps2Data.valScaled =
       map(apps2Data.valAnalog, apps2Data.valAnalogUP - apps2Data.range * cfgAPPSMargin, apps2Data.valAnalogDOWN + apps2Data.range * cfgAPPSMargin, apps2Data.valScaledDOWN, apps2Data.valScaledUP);
 
-  //------------------------------------
-  // Serial.println(apps1Data.valScaled);
-  // Serial.println(apps2Data.valScaled);
+    stsAPPS = apps(apps1Data.valScaled, apps2Data.valScaled, cfgAPPSdiff, cfgAPPSmax, cfgAPPSdescScaled);
 
+
+
+
+  //R2D
+  stsR2D = true; //*****DESCOMENTAR
+  stsAPPS = 0;   //*****DESCOMENTAR
   stsR2D = R2D(stsTSON, stsStart, (stsBrake >= cfgBrakeTH));
-  stsAPPS = apps(apps1Data.valScaled, apps2Data.valScaled, cfgAPPSdiff, cfgAPPSmax, cfgAPPSdescScaled);
 
-  //*****DESCOMENTAR
-   stsR2D=true;
-   stsAPPS=0;
-  // VELOCIDAD
+  //Cálculo de consignas de velocidad/corriente
   if (!stsR2D || stsAPPS != 0)
   {
     RPMtarget = 0;
-    currentTarget=0;
+    currentTarget = 0;
   }
   else if (stsR2D && stsAPPS == 0)
   {
     RPMtarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, cfgRMPMax);
-    currentTarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, cfgCurrentACMAX*1000);
+    currentTarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, cfgCurrentACMAX * 1000);
     if (RPMtarget < 0)
       RPMtarget = 0;
     if (currentTarget < 0)
@@ -207,7 +201,7 @@ void loop()
   cfgERPM = 10 * RPMtarget;
 
   // DRIVE ENABLE
-  
+
   if (!stsR2D)
   {
     cfgDriveEnable = 0;
@@ -219,8 +213,8 @@ void loop()
   }
 
   cmdDataDriveEN[0] = cfgDriveEnable;
-  cmdDataRPM[0] =RPMtarget;
-  cmdDataCurrent[0] = currentTarget/100;
+  cmdDataRPM[0] = RPMtarget;
+  cmdDataCurrent[0] = currentTarget / 100;
 
   // ******WRITE
 
@@ -235,27 +229,17 @@ void loop()
     CAN.setPacket(idCmdCurrent, cmdDataCurrent);
   }
 
-  //Motor current setpoint control via MART-CAN library
-  unsigned long int currentSetpointID=0x0122;
-  byte currentSetpointData[8]={0x00,0x64,0x00,0x00,0x00,0x00,0x00,0x00};
-  CAN.setPacket(currentSetpointID,currentSetpointData);
+  // Motor current setpoint control via MART-CAN library
+  unsigned long int currentSetpointID = 0x0122;
+  byte currentSetpointData[8] = {0x00, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  //CAN.setPacket(currentSetpointID, currentSetpointData);
   CAN.send();
-
 
   CAN.setPacket(idCmdEN, cmdDataDriveEN);
- // readInverterStatus();
-  CAN.send();
- //Serial.println(RPMtarget);
-  // ads.st
+  // readInverterStatus();
 
- //Serial.println(cmdDataRPM[0]);
-   
-//Serial.println((String)cmdDataCurrent[0]+" "+ stsBrake+" "+stsTSON+" "+stsStart+" rd2="+stsR2D);
-//Serial.println((String)apps1Data.valAnalog+" "+apps2Data.valAnalog);
-//Serial.println(cmdDataCurrent[0]);
-Serial.println(cfgDriveEnable);
   debug();
-  // delay(50);
+
 }
 void readInverterStatus()
 {
@@ -282,26 +266,9 @@ void readInverterStatus()
 
 void debug()
 {
-  // if (stsR2D)
-  // {
-  //   Serial.println("R2D");
-  // }
-  // Serial.println((String)"T= "+(millis()-tA));
-  // Serial.println((String)"Tson= "+stsTSON+" start= "+stsStart);
-}
-
-void globalPRG()
-{
-  switch (stepindexGlobal)
-  {
-  case 0:
-    if (true)
-      ;
-    break;
-
-  default:
-    break;
-  }
+  Serial.println((String) "APPS1: " + apps1Data.valScaled + "APPS2: " + apps2Data.valScaled);
+  Serial.println((String)"Brake: "+ stsBrake+" TSON: "+stsTSON+" Start: "+stsStart+" R2D: "+stsR2D);
+  Serial.println((String)"Drive Enable: "+cmdDataDriveEN[0]+" Current: "+cmdDataCurrent[0]+" EERPM: "+cmdDataRPM[0]);
 }
 
 void debugShowADC()
@@ -341,6 +308,8 @@ void debugCAN()
   // }
 }
 
+
+
 bool R2D(bool tson, bool start, bool brake)
 {
   static int step = 0;
@@ -367,7 +336,7 @@ bool R2D(bool tson, bool start, bool brake)
     else if (start && brake)
     {
       tAux = millis();
-    digitalWrite(pinBUZZ, true);
+      digitalWrite(pinBUZZ, true);
       step += 10;
     }
     break;
