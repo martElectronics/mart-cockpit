@@ -12,7 +12,7 @@ int pinTSON = 34, pinStart = 17, pinBUZZ = 25;
 
 //**GLOBAL CONTROL */
 bool ctrlBYPOT = true, ctrlByR2D = false, ctrlBYDSP = false, ctrlByExternalADC = true;
-bool cfgCtrlBySpeed = false;
+bool cfgCtrlBySpeed = true;
 
 int appsGlobalValue;
 
@@ -168,9 +168,9 @@ void loop()
   apps2Data.valAnalog = ads.readADC_SingleEnded(1);
   stsBrake = ads.readADC_SingleEnded(3);
   //------------------------------------
-  delay(1000);
-  Serial.println(ads.readADC_SingleEnded(0));
-  Serial.println(ads.readADC_SingleEnded(1));
+  //delay(1000);
+  // Serial.println(ads.readADC_SingleEnded(0));
+  // Serial.println(ads.readADC_SingleEnded(1));
        
   //****PROCESAMIENTO
   apps1Data.valScaled =
@@ -180,14 +180,15 @@ void loop()
       map(apps2Data.valAnalog, apps2Data.valAnalogUP - apps2Data.range * cfgAPPSMargin, apps2Data.valAnalogDOWN + apps2Data.range * cfgAPPSMargin, apps2Data.valScaledDOWN, apps2Data.valScaledUP);
 
   //------------------------------------
-  Serial.println(apps1Data.valScaled);
-  Serial.println(apps2Data.valScaled);
+  // Serial.println(apps1Data.valScaled);
+  // Serial.println(apps2Data.valScaled);
 
   stsR2D = R2D(stsTSON, stsStart, (stsBrake >= cfgBrakeTH));
   stsAPPS = apps(apps1Data.valScaled, apps2Data.valScaled, cfgAPPSdiff, cfgAPPSmax, cfgAPPSdescScaled);
 
   //*****DESCOMENTAR
- // stsR2D=true;
+   stsR2D=true;
+   stsAPPS=0;
   // VELOCIDAD
   if (!stsR2D || stsAPPS != 0)
   {
@@ -249,9 +250,10 @@ void loop()
 
  //Serial.println(cmdDataRPM[0]);
    
-Serial.println((String)cmdDataCurrent[0]+" "+ stsBrake+" "+stsTSON+" "+stsStart+" rd2="+stsR2D);
+//Serial.println((String)cmdDataCurrent[0]+" "+ stsBrake+" "+stsTSON+" "+stsStart+" rd2="+stsR2D);
 //Serial.println((String)apps1Data.valAnalog+" "+apps2Data.valAnalog);
 //Serial.println(cmdDataCurrent[0]);
+Serial.println(cfgDriveEnable);
   debug();
   // delay(50);
 }
