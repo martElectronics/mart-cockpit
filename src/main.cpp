@@ -118,6 +118,15 @@ void configureAPPS()
   apps2Data.range = abs(apps2Data.valAnalogUP - apps2Data.valAnalogDOWN);
 }
 
+// Function to convert an int32_t to 4 bytes
+std::array<uint8_t, 4> int32ToBytes(int32_t value) {
+    std::array<uint8_t, 4> bytes;
+    for (int i = 0; i < 4; ++i) {
+        bytes[i] = static_cast<uint8_t>((value >> (i * 8)) & 0xFF);
+    }
+    return bytes;
+}
+
 void setup()
 {
 
@@ -261,11 +270,22 @@ void canSender() {
   testFrame.data_length_code = 8; // Set length of data - change depending on data sent
 
 
-  for(int i=0;i<8;i++)
+   std::array<uint8_t, 4> bytes = int32ToBytes(cmdDataRPM[0]);
+
+    // // Print the bytes
+    // std::cout << "Bytes: ";
+    // for (uint8_t byte : bytes) {
+    //     std::cout << std::hex << static_cast<int>(byte) << " ";
+    // }
+
+
+  for(int i=0;i<4;i++)
   {
-   //  testFrame.data[i]=cmdDataRPM[i];
+    testFrame.data[i]=bytes[i];
+    testFrame.data[i+4]=0xFF;
   }
-  testFrame.data[0]=1;
+
+
   
   ESP32Can.writeFrame(testFrame); // transmit frame
   Serial.println("done");
