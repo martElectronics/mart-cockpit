@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <MART_CAN.h>
+#include <SPI.h>
 #include <Adafruit_ADS1X15.h>
 #include "global.h"
 CAN_BUS CAN(5, 2);    // 21 18 23 19 5 MCP2515
@@ -12,7 +13,7 @@ int pinTSON = 34, pinStart = 17, pinBUZZ = 25;
 
 //**GLOBAL CONTROL */
 bool ctrlBYPOT = true, ctrlByR2D = false, ctrlBYDSP = false, ctrlByExternalADC = true;
-bool cfgCtrlBySpeed = false;
+bool cfgCtrlBySpeed = true;
 
 int appsGlobalValue;
 
@@ -31,7 +32,7 @@ unsigned long int idMens, idR2D = 100;
 unsigned long int idPacket, idNode = 1;
 int data;
 bool enableInverter;
-int RPMtarget, cfgRPMax = 8000, currentTarget;
+int RPMtarget, cfgRPMax = 1500, currentTarget;
 
 unsigned long int idCmdRPM = combineInts(3, idNode);     // 97
 unsigned long int idCmdEN = combineInts(12, idNode);     // 385
@@ -57,11 +58,11 @@ struct sensorData apps1Data, apps2Data;
 int cmdDataRPM[2];
 short cmdDataCurrent[4];
 byte cmdDataDriveEN[8];
-
+int globalPCTG;
 //*CONFIG**/
 
 // Write separated by commas the packet id to send periodically to the inverter
-char packetIDStoConfig[] = "8,9,10,11";
+char packetIDStoConfig[] ="";//= "8,9,10,11";
 
 int cfgCurrent = 10,          // 1
     cfgCurrentBrake = 10,     // 2
@@ -83,6 +84,7 @@ int getFilteredAnalogRead(int, int sampleSize);                         // Does 
 bool R2D(bool tson, bool start, bool brake);                            // Returns de R2D state
 int apps(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc); // Returns the APPS implausability state
 void debug();                                                           // Shows debug info
+void debugShowADC();                                                    // Shows debug ADC info
 void readInverterStatus();                                              // Reads inverter info
 unsigned long int combineInts(uint32_t int1, uint32_t int2);            // Calculates the inverter CAN packets IDs
 void fillConfigsArray();                                                // Makes a copy of the configuration
@@ -98,12 +100,12 @@ unsigned long int tA = millis();
 
 void configureAPPS()
 {
-  apps1Data.valAnalogUP = 12000;
-  apps1Data.valAnalogDOWN = 8000;
-  apps2Data.valAnalogUP = 12950;
-  apps2Data.valAnalogDOWN = 12400;
-  apps1Data.valScaledUP = apps2Data.valScaledUP = 1000;
-  apps1Data.valScaledDOWN = apps2Data.valScaledDOWN = 0;
+  apps1Data.valAnalogUP = 4000; //23550  //21700(sin 12v)
+  apps1Data.valAnalogDOWN = 17000;//22920 //22920
+  apps2Data.valAnalogUP = 13080;
+  apps2Data.valAnalogDOWN = 12270;
+  apps1Data.valScaledUP = apps2Data.valScaledUP = 0;
+  apps1Data.valScaledDOWN = apps2Data.valScaledDOWN = 1000;
   apps1Data.range = abs(apps1Data.valAnalogUP - apps1Data.valAnalogDOWN);
   apps2Data.range = abs(apps2Data.valAnalogUP - apps2Data.valAnalogDOWN);
 }
@@ -120,7 +122,7 @@ void setup()
   // INIT
   parseConfigIds(packetIDStoConfig);
   fillConfigsArray();
-  configInverterLimits();
+  //configInverterLimits();
   configureAPPS();
 
   for (int i = 1; i < 8; i++)
@@ -142,6 +144,7 @@ void setup()
   }
   // Sets max I2C bus speed
   ads.setDataRate(RATE_ADS1115_860SPS);
+  //CAN.setPacketTimer(idCmdEN,50);
 }
 
 void loop()
@@ -163,7 +166,7 @@ void loop()
   // APPS
   // Returns a negative number if the APPS is below the safety margin
   apps1Data.valScaled =
-      map(apps1Data.valAnalog, apps1Data.valAnalogUP - apps1Data.range * cfgAPPSMargin, apps1Data.valAnalogDOWN + apps1Data.range * cfgAPPSMargin, apps1Data.valScaledUP, apps1Data.valScaledDOWN);
+      map(apps1Data.valAnalog, apps1Data.valAnalogUP - apps1Data.range * cfgAPPSMargin, apps1Data.valAnalogDOWN + apps1Data.range * cfgAPPSMargin, apps1Data.valScaledDOWN, apps1Data.valScaledUP);
 
   apps2Data.valScaled =
       map(apps2Data.valAnalog, apps2Data.valAnalogUP - apps2Data.range * cfgAPPSMargin, apps2Data.valAnalogDOWN + apps2Data.range * cfgAPPSMargin, apps2Data.valScaledDOWN, apps2Data.valScaledUP);
@@ -172,6 +175,7 @@ void loop()
 
   // R2D
   stsR2D = stsStart; //*****COMENTAR
+  stsR2D=true;
   stsAPPS = 0;       //*****COMENTAR
   // stsR2D = R2D(stsTSON, stsStart, (stsBrake >= cfgBrakeTH));
 
@@ -187,8 +191,8 @@ void loop()
     currentTarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, 1000); // current target in % * 10
     if (RPMtarget < 0)
       RPMtarget = 0;
-    else if (RPMtarget > cfgRPMax)
-      RPMtarget = cfgRPMax;
+    else if (RPMtarget > (cfgRPMax*10))
+      RPMtarget = cfgRPMax*10;
     if (currentTarget < 0)
       currentTarget = 0;
     else if (currentTarget > 1000)
@@ -204,12 +208,14 @@ void loop()
     cfgDriveEnable = 1;
   }
 
-  cmdDataDriveEN[0] = cfgDriveEnable;
+  cmdDataDriveEN[0] = (byte)cfgDriveEnable;
+  //cmdDataDriveEN[7] = map(currentTarget,0,1000,0,100);
   cmdDataRPM[0] = RPMtarget;
   cmdDataCurrent[0] = currentTarget;
 
   // ******WRITE
 
+  CAN.setPacket(idCmdEN, cmdDataDriveEN);
   if (cfgCtrlBySpeed)
   {
 
@@ -218,15 +224,14 @@ void loop()
   else
   {
 
-    CAN.setPacket(idCmdCurrent, cmdDataCurrent);
+  CAN.setPacket(idCmdCurrent, cmdDataCurrent);
   }
 
-  CAN.setPacket(idCmdEN, cmdDataDriveEN);
   CAN.send();
-
-  // debug();
+  //CAN.printReceivedIds();
+ //debug();
   // readInverterStatus();
-
+  //debugShowADC();
   // Serial.println(millis()-tA);
 }
 void readInverterStatus()
@@ -254,10 +259,14 @@ void readInverterStatus()
 
 void debug()
 {
+  
+  Serial.println((String) "APPS1 analog: " + apps1Data.valAnalog + " APPS2: " + apps2Data.valAnalog);
   Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
   Serial.println((String) "Brake: " + stsBrake + " TSON: " + stsTSON + " Start: " + stsStart + " R2D: " + stsR2D);
   Serial.println((String) "Drive Enable: " + cmdDataDriveEN[0] + " Current: " + cmdDataCurrent[0] + " EERPM: " + cmdDataRPM[0]);
-  Serial.println((String)apps1Data.valAnalog + " valScaled: " + apps1Data.valScaled + " RPM: " + RPMtarget + " Current pctg: " + currentTarget);
+  
+  Serial.println((String) apps1Data.valAnalog + " valScaled: " + apps1Data.valScaled + " RPM: " + RPMtarget + " Current pctg: " + currentTarget);
+   Serial.println();
   delay(500);
 }
 
@@ -280,6 +289,7 @@ void debugShowADC()
   Serial.print("  ");
   Serial.print(volts3);
   Serial.println("V");
+  delay(500);
 }
 
 bool R2D(bool tson, bool start, bool brake)
