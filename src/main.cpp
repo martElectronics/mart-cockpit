@@ -37,6 +37,7 @@ int RPMtarget, cfgRPMax = 1500, currentTarget;
 unsigned long int idCmdRPM = combineInts(3, idNode);     // 97
 unsigned long int idCmdEN = combineInts(12, idNode);     // 385
 unsigned long int idCmdCurrent = combineInts(5, idNode); // ??
+unsigned long int idCmdSetMaxACCurrent = combineInts(8, idNode); // ??
 // Packet ID 0x20: ERPM, Duty, Input Voltage
 unsigned long int id0StsInverter = combineInts(36, idNode);
 
@@ -56,7 +57,7 @@ struct sensorData apps1Data, apps2Data;
 
 // DATA
 int cmdDataRPM[2];
-short cmdDataCurrent[4];
+short cmdDataCurrent[4],cmdDataCurrentACMax[4];
 byte cmdDataDriveEN[8];
 int globalPCTG;
 //*CONFIG**/
@@ -64,16 +65,16 @@ int globalPCTG;
 // Write separated by commas the packet id to send periodically to the inverter
 char packetIDStoConfig[] ="";//= "8,9,10,11";
 
-int cfgCurrent = 10,          // 1
-    cfgCurrentBrake = 10,     // 2
+int cfgCurrent = 0,          // 1
+    cfgCurrentBrake = 0,     // 2
     cfgERPM = 0,              // 3
     cfgPos = 0,               // 4
     cfgCurrentRel,            // 5
     cfgCurrentRelBrake,       // 6
     cfgDO,                    // 7
-    cfgCurrentACMAX = 10,     // 8
+    cfgCurrentACMAX = 1,     // 8
     cfgCurrentACBrakeMAX = 0, // 9
-    cfgCurrentDCMAX = 5,      // 10
+    cfgCurrentDCMAX = 0,      // 10
     cfgCurrentDCBrakeMAX = 0, // 11
     cfgDriveEnable = 0;       // 12
 
@@ -96,6 +97,7 @@ int stsBrake;
 int cfgBrakeTH = 3300, cfgChannelAPPS1 = 0, cfgChannelAPPS2 = 1, cfgChannelBrake = 2, cfgChannelSteering = 3;
 int cfgAPPSdiff = 10, cfgAPPSdesc = 5000, cfgAPPSdescScaled = 200, cfgAPPSmax = 0, cfgTimeSoundR2D = 1100;
 float cfgAPPSMargin = 0.1; // (0.1=10%)
+int cfgScaleFactor=1000; //Aumenta resolución al hacer map(), luego se divide por el mismo factor en la consigna final
 unsigned long int tA = millis();
 
 void configureAPPS()
@@ -133,6 +135,7 @@ void setup()
   for (int i = 1; i < 4; i++)
   {
     cmdDataCurrent[i] = 0xFFFF;
+    cmdDataCurrentACMax[i]=0xFFFF;
   }
 
   if (!ads.begin())
@@ -188,7 +191,8 @@ void loop()
   else if (stsR2D && stsAPPS == 0)
   {
     RPMtarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, cfgRPMax * 10);
-    currentTarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, 1000); // current target in % * 10
+    //currentTarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, 1000); // current target in % * 10
+    currentTarget= map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, cfgCurrentACMAX*10*cfgScaleFactor);
     if (RPMtarget < 0)
       RPMtarget = 0;
     else if (RPMtarget > (cfgRPMax*10))
@@ -211,8 +215,8 @@ void loop()
   cmdDataDriveEN[0] = (byte)cfgDriveEnable;
   //cmdDataDriveEN[7] = map(currentTarget,0,1000,0,100);
   cmdDataRPM[0] = RPMtarget;
-  cmdDataCurrent[0] = currentTarget;
-
+  cmdDataCurrent[0] = currentTarget/cfgScaleFactor;
+  cmdDataCurrentACMax[0] = cfgCurrentACMAX*10;
   // ******WRITE
 
   CAN.setPacket(idCmdEN, cmdDataDriveEN);
@@ -225,6 +229,7 @@ void loop()
   {
 
   CAN.setPacket(idCmdCurrent, cmdDataCurrent);
+  CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax);
   }
 
   CAN.send();
