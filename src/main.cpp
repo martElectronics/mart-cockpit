@@ -1,15 +1,20 @@
 #include <Arduino.h>
 #include <MART_CAN.h>
 #include <SPI.h>
-#include <Adafruit_ADS1X15.h>
 #include "global.h"
-CAN_BUS CAN(5, 2);    // 21 18 23 19 5 MCP2515
-Adafruit_ADS1115 ads; /* Use this for the 16-bit version */
+#include <Mcp320x.h>
+
+#define SPI_CS    	10 		   // SPI slave select
+#define ADC_VREF    3300     // 3.3V Vref
+#define ADC_CLK     1600000  // SPI clock 1.6MHz
+
+
+CAN_BUS CAN(HardwareType::Transciever, 1000, 1);
+MCP3208 adc(ADC_VREF, SPI_CS);
 
 // PINES
 
-int idPotDSP = 10, idENDDSP = 11;
-int pinTSON = 34, pinStart = 17, pinBUZZ = 25;
+int pinTSON = 21, pinStart = 35, pinBUZZ = 15;
 
 //**GLOBAL CONTROL */
 bool ctrlBYPOT = true, ctrlByR2D = false, ctrlBYDSP = false, ctrlByExternalADC = true;
@@ -102,8 +107,8 @@ unsigned long int tA = millis();
 
 void configureAPPS()
 {
-  apps1Data.valAnalogUP = 4000; //23550  //21700(sin 12v)
-  apps1Data.valAnalogDOWN = 17000;//22920 //22920
+  apps1Data.valAnalogUP = 2000; //23550  //21700(sin 12v)
+  apps1Data.valAnalogDOWN = 3000;//22920 //22920
   apps2Data.valAnalogUP = 13080;
   apps2Data.valAnalogDOWN = 12270;
   apps1Data.valScaledUP = apps2Data.valScaledUP = 0;
@@ -138,15 +143,16 @@ void setup()
     cmdDataCurrentACMax[i]=0xFFFF;
   }
 
-  if (!ads.begin())
-  {
+  //***MCP3208 */
 
-    Serial.println("Failed to initialize ADS.");
-    while (1)
-      ;
-  }
-  // Sets max I2C bus speed
-  ads.setDataRate(RATE_ADS1115_860SPS);
+   pinMode(SPI_CS, OUTPUT);
+   digitalWrite(SPI_CS, HIGH);
+ 
+   // initialize SPI interface for MCP3208
+   SPISettings settings(ADC_CLK, MSBFIRST, SPI_MODE0);
+   SPI.begin();
+   SPI.beginTransaction(settings);
+
   //CAN.setPacketTimer(idCmdEN,50);
 }
 
@@ -161,9 +167,9 @@ void loop()
 
   // stsBrake=ads.readADC_SingleEnded(cfgChannelSteering);
   // stsBrake = cfgBrakeTH ;
-  apps1Data.valAnalog = ads.readADC_SingleEnded(0);
-  apps2Data.valAnalog = ads.readADC_SingleEnded(1);
-  stsBrake = ads.readADC_SingleEnded(3);
+  apps1Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_4);;
+  //apps2Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_6);
+  //stsBrake = adc.read(MCP3208::Channel::SINGLE_5);;
 
   //****PROCESAMIENTO
   // APPS
@@ -199,8 +205,8 @@ void loop()
       RPMtarget = cfgRPMax*10;
     if (currentTarget < 0)
       currentTarget = 0;
-    else if (currentTarget > 1000)
-      currentTarget = 1000;
+    // else if (currentTarget > 1000)
+    //   currentTarget = 1000;
   }
   // DRIVE ENABLE
   if (!stsR2D)
@@ -232,12 +238,16 @@ void loop()
   CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax);
   }
 
-  CAN.send();
+  //CAN.send();
   //CAN.printReceivedIds();
  //debug();
   // readInverterStatus();
   //debugShowADC();
   // Serial.println(millis()-tA);
+  Serial.println(cmdDataCurrent[0]);
+
+
+
 }
 void readInverterStatus()
 {
@@ -277,24 +287,24 @@ void debug()
 
 void debugShowADC()
 {
-  // Serial.println("-----------------------------------------------------------");
-  Serial.print("AIN0: ");
-  Serial.print(adc0);
-  Serial.print("  ");
-  Serial.print(volts0);
-  Serial.println("V");
-  Serial.print("AIN1: ");
-  Serial.print(adc1);
-  Serial.print("  ");
-  Serial.print(volts1);
-  Serial.println("V");
-  // Serial.print("AIN2: "); Serial.print(adc2); Serial.print("  "); Serial.print(volts2); Serial.println("V");
-  Serial.print("AIN3: ");
-  Serial.print(adc3);
-  Serial.print("  ");
-  Serial.print(volts3);
-  Serial.println("V");
-  delay(500);
+  // // Serial.println("-----------------------------------------------------------");
+  // Serial.print("AIN0: ");
+  // Serial.print(adc0);
+  // Serial.print("  ");
+  // Serial.print(volts0);
+  // Serial.println("V");
+  // Serial.print("AIN1: ");
+  // Serial.print(adc1);
+  // Serial.print("  ");
+  // Serial.print(volts1);
+  // Serial.println("V");
+  // // Serial.print("AIN2: "); Serial.print(adc2); Serial.print("  "); Serial.print(volts2); Serial.println("V");
+  // Serial.print("AIN3: ");
+  // Serial.print(adc3);
+  // Serial.print("  ");
+  // Serial.print(volts3);
+  // Serial.println("V");
+  // delay(500);
 }
 
 bool R2D(bool tson, bool start, bool brake)

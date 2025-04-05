@@ -30,12 +30,12 @@ struct sensorData
 {
   // Configuración
   int pin;
-  int valAnalogUP, valAnalogDOWN;
-  int valScaledUP, valScaledDOWN;
-  int range;
+  uint16_t valAnalogUP, valAnalogDOWN;
+  uint16_t valScaledUP, valScaledDOWN;
+  uint16_t range;
 
   // Runtime
-  int valAnalog, valScaled, valAvg, valDifference;
+  uint16_t valAnalog, valScaled, valAvg, valDifference;
 };
 
 //INVERTER
