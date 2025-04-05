@@ -1,3 +1,5 @@
+
+
 #include <Arduino.h>
 #include <MART_CAN.h>
 #include <SPI.h>
@@ -18,7 +20,7 @@ int pinTSON = 21, pinStart = 35, pinBUZZ = 15;
 
 //**GLOBAL CONTROL */
 bool ctrlBYPOT = true, ctrlByR2D = false, ctrlBYDSP = false, ctrlByExternalADC = true;
-bool cfgCtrlBySpeed = true;
+bool cfgCtrlBySpeed = false;
 
 int appsGlobalValue;
 
@@ -77,7 +79,7 @@ int cfgCurrent = 0,          // 1
     cfgCurrentRel,            // 5
     cfgCurrentRelBrake,       // 6
     cfgDO,                    // 7
-    cfgCurrentACMAX = 1,     // 8
+    cfgCurrentACMAX = 4,     // 8
     cfgCurrentACBrakeMAX = 0, // 9
     cfgCurrentDCMAX = 0,      // 10
     cfgCurrentDCBrakeMAX = 0, // 11
@@ -107,8 +109,8 @@ unsigned long int tA = millis();
 
 void configureAPPS()
 {
-  apps1Data.valAnalogUP = 2000; //23550  //21700(sin 12v)
-  apps1Data.valAnalogDOWN = 3000;//22920 //22920
+  apps1Data.valAnalogUP = 3000; //23550  //21700(sin 12v)
+  apps1Data.valAnalogDOWN = 1000;//22920 //22920
   apps2Data.valAnalogUP = 13080;
   apps2Data.valAnalogDOWN = 12270;
   apps1Data.valScaledUP = apps2Data.valScaledUP = 0;
@@ -161,7 +163,7 @@ void loop()
   tA = millis();
 
   //****LECTURA
-  CAN.receive();
+ // CAN.receive();
   stsTSON = digitalRead(pinTSON); // cambiado por logica
   stsStart = !digitalRead(pinStart);
 
@@ -238,7 +240,7 @@ void loop()
   CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax);
   }
 
-  //CAN.send();
+  CAN.send();
   //CAN.printReceivedIds();
  //debug();
   // readInverterStatus();
