@@ -18,7 +18,7 @@
 
 
 
-CAN_BUS CAN(HardwareType::Transciever, 1000, 1);
+CAN_BUS CAN(HardwareType::Transciever, 125, 1);
 MCP3208 adc(ADC_VREF, SPI_CS);
 Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
@@ -54,19 +54,19 @@ uint32_t idCmdEN = combineInts(12, idNode);             // 385
 uint32_t idCmdCurrent = combineInts(5, idNode);         // ??
 uint32_t idCmdSetMaxACCurrent = combineInts(8, idNode); // ??
 // Packet ID 0x20: ERPM, Duty, Input Voltage
-uint32_t id0StsInverter = combineInts(36, idNode);
+uint32_t id0StsInverter = combineInts(0x20, idNode);
 
 // Packet ID 0x21: AC Current, DC Current
-uint32_t id1StsInverter = combineInts(37, idNode);
+uint32_t id1StsInverter = combineInts(0x21, idNode);
 
 // Packet ID 0x22: Controller Temp., Motor Temp., Fault code
-uint32_t id2StsInverter = combineInts(38, idNode);
+uint32_t id2StsInverter = combineInts(0x22, idNode);
 
 // Packet ID 0x23: Id, Iq values
-uint32_t id3StsInverter = combineInts(39, idNode);
+uint32_t id3StsInverter = combineInts(0x23, idNode);
 
 // Packet ID 0x24: Throttle signal, Brake signal, Digital I/Os, Drive enable, Limit status bits, CAN map version
-uint32_t id4StsInverter = combineInts(40, idNode);
+uint32_t id4StsInverter = combineInts(0x24, idNode);
 // APPS
 struct sensorData apps1Data, apps2Data;
 
@@ -132,7 +132,7 @@ void controlInverter()
   tA = millis();
 
   //****LECTURA
-  CAN.receive();
+  //CAN.receive();
   stsTSON = digitalRead(pinTSON); // cambiado por logica
   stsStart = !digitalRead(pinStart);
 
@@ -176,8 +176,8 @@ void controlInverter()
       RPMtarget = cfgRPMax * 10;
     if (currentTarget < 0)
       currentTarget = 0;
-    // else if (currentTarget > 1000)
-    //   currentTarget = 1000;
+    else if (currentTarget > cfgCurrentACMAX * 10 * cfgScaleFactor) currentTarget = cfgCurrentACMAX * 10 * cfgScaleFactor;
+    
   }
   // DRIVE ENABLE
   if (!stsR2D)
@@ -204,9 +204,8 @@ void controlInverter()
   }
   else
   {
-
     CAN.setPacket(idCmdCurrent, cmdDataCurrent, 1);
-   // CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
+    CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
   }
 
   CAN.send();
@@ -259,13 +258,14 @@ void loop()
   controlInverter();
   CAN.getCANStatusData();
   readInverterStatus();
+  //debug();
  
 
 }
 void readInverterStatus()
 {
   static uint64_t tAux = millis();
-  CAN.getPacket(0x441, stsInverterCAN_22_FULL, 8); //ID status = 1217 (decimal) 0x4C1 (hex) //REVISAR
+  CAN.getPacket(id2StsInverter, stsInverterCAN_22_FULL, 8); //ID status = 1217 (decimal) 0x4C1 (hex) //REVISAR
   
   stsInverterCAN_FaultCode = stsInverterCAN_22_FULL[4];
   CAN.getPacket(id4StsInverter, stsInverterCAN_24_FULL, 8);
@@ -275,6 +275,7 @@ void readInverterStatus()
   {
     CAN.printByteArray(stsInverterCAN_22_FULL,8);
     Serial.println(id2StsInverter);
+    Serial.println(id4StsInverter);
     Serial.println(getErrorMessage(stsInverterCAN_FaultCode));
     if (stsInverterCAN_DriveEnable == 1)
     {
@@ -306,15 +307,22 @@ void readInverterStatus()
 
 void debug()
 {
+  static uint64_t tAux = millis();
 
-  Serial.println((String) "APPS1 analog: " + apps1Data.valAnalog + " APPS2: " + apps2Data.valAnalog);
-  Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
-  Serial.println((String) "Brake: " + stsBrake + " TSON: " + stsTSON + " Start: " + stsStart + " R2D: " + stsR2D);
-  Serial.println((String) "Drive Enable: " + cmdDataDriveEN[0] + " Current: " + cmdDataCurrent[0] + " EERPM: " + cmdDataRPM[0]);
+  // Serial.println((String) "APPS1 analog: " + apps1Data.valAnalog + " APPS2: " + apps2Data.valAnalog);
+  // Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
+  // Serial.println((String) "Brake: " + stsBrake + " TSON: " + stsTSON + " Start: " + stsStart + " R2D: " + stsR2D);
+  // Serial.println((String) "Drive Enable: " + cmdDataDriveEN[0] + " Current: " + cmdDataCurrent[0] + " EERPM: " + cmdDataRPM[0]);
 
-  Serial.println((String)apps1Data.valAnalog + " valScaled: " + apps1Data.valScaled + " RPM: " + RPMtarget + " Current pctg: " + currentTarget);
-  Serial.println();
-  delay(500);
+  // Serial.println((String)apps1Data.valAnalog + " valScaled: " + apps1Data.valScaled + " RPM: " + RPMtarget + " Current pctg: " + currentTarget);
+  // Serial.println();
+  // delay(500);
+
+  if ((millis() - tAux) >= 1000)
+  {
+    Serial.println((String)"Current=" +cmdDataCurrent[0]);
+  }
+
 }
 
 void debugShowADC()
