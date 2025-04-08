@@ -205,8 +205,8 @@ void controlInverter()
   else
   {
 
-    CAN.setPacket(idCmdCurrent, cmdDataCurrent, 4);
-    CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
+    CAN.setPacket(idCmdCurrent, cmdDataCurrent, 1);
+   // CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
   }
 
   CAN.send();
@@ -265,14 +265,15 @@ void loop()
 void readInverterStatus()
 {
   static uint64_t tAux = millis();
-  CAN.getPacket(id2StsInverter, stsInverterCAN_22_FULL, 8); //ID status = 1217 (decimal) 0x4C1 (hex)
-  //CAN.printByteArray(stsInverterCAN_22_FULL,8);
+  CAN.getPacket(0x441, stsInverterCAN_22_FULL, 8); //ID status = 1217 (decimal) 0x4C1 (hex) //REVISAR
+  
   stsInverterCAN_FaultCode = stsInverterCAN_22_FULL[4];
   CAN.getPacket(id4StsInverter, stsInverterCAN_24_FULL, 8);
   stsInverterCAN_DriveEnable = stsInverterCAN_24_FULL[3];
 
   if ((millis() - tAux) >= 1000)
   {
+    CAN.printByteArray(stsInverterCAN_22_FULL,8);
     Serial.println(id2StsInverter);
     Serial.println(getErrorMessage(stsInverterCAN_FaultCode));
     if (stsInverterCAN_DriveEnable == 1)
