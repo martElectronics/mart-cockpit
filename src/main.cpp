@@ -18,7 +18,7 @@
 
 
 
-CAN_BUS CAN(HardwareType::Transciever, 125, 1);
+CAN_BUS CAN(HardwareType::Transciever, 1000, 1);
 MCP3208 adc(ADC_VREF, SPI_CS);
 Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
@@ -79,7 +79,7 @@ int cfgCurrent = 0,           // 1
     cfgCurrentRel,            // 5
     cfgCurrentRelBrake,       // 6
     cfgDO,                    // 7
-    cfgCurrentACMAX = 5,      // 8
+    cfgCurrentACMAX = 3,      // 8
     cfgCurrentACBrakeMAX = 0, // 9
     cfgCurrentDCMAX = 0,      // 10
     cfgCurrentDCBrakeMAX = 0, // 11
@@ -109,8 +109,8 @@ uint32_t tA = millis();
 
 void configureAPPS()
 {
-  apps1Data.valAnalogUP = 3000;   // 23550  //21700(sin 12v)
-  apps1Data.valAnalogDOWN = 1000; // 22920 //22920
+  apps1Data.valAnalogUP = 3700;   // 23550  //21700(sin 12v)
+  apps1Data.valAnalogDOWN = 200; // 22920 //22920
   apps2Data.valAnalogUP = 13080;
   apps2Data.valAnalogDOWN = 12270;
   apps1Data.valScaledUP = apps2Data.valScaledUP = 0;
@@ -168,7 +168,10 @@ void controlInverter()
       RPMtarget = cfgRPMax * 10;
     if (currentTarget < 0)
       currentTarget = 0;
-    else if (currentTarget > cfgCurrentACMAX * 10 * cfgScaleFactor) currentTarget = cfgCurrentACMAX * 10 * cfgScaleFactor;
+    else if (currentTarget >= (cfgCurrentACMAX * 10 * cfgScaleFactor))
+    {
+      currentTarget = cfgCurrentACMAX * 10 * cfgScaleFactor;
+    } 
     
   }
   // DRIVE ENABLE
@@ -197,7 +200,7 @@ void controlInverter()
   else
   {
     CAN.setPacket(idCmdCurrent, cmdDataCurrent, 1);
-    CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
+  // CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
   }
 
   CAN.send();
@@ -250,7 +253,7 @@ void loop()
   controlInverter();
   CAN.getCANStatusData();
   readInverterStatus();
-  //debug();
+  debug();
  
 
 }
@@ -266,8 +269,8 @@ void readInverterStatus()
   if ((millis() - tAux) >= 1000)
   {
     CAN.printByteArray(stsInverterCAN_22_FULL,8);
-    Serial.println(id2StsInverter);
-    Serial.println(id4StsInverter);
+    // Serial.println(id2StsInverter);
+    // Serial.println(id4StsInverter);
     Serial.println(getErrorMessage(stsInverterCAN_FaultCode));
     if (stsInverterCAN_DriveEnable == 1)
     {
@@ -312,7 +315,8 @@ void debug()
 
   if ((millis() - tAux) >= 1000)
   {
-    Serial.println((String)"Current=" +cmdDataCurrent[0]);
+    Serial.println((String)"Current=" +apps1Data.valAnalog);
+    tAux=millis();
   }
 
 }
