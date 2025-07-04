@@ -25,20 +25,12 @@ Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 int pinTSON = 21, pinStart = 35, pinBUZZ = 15, pinTSON_EXT = 8;
 
 //**GLOBAL CONTROL */
-bool ctrlBYPOT = true, ctrlByR2D = false, ctrlBYDSP = false, ctrlByExternalADC = true;
 bool cfgCtrlBySpeed = false;
-
-int appsGlobalValue;
-
-int16_t adc0, adc1, adc2, adc3;
-float volts0, volts1, volts2, volts3;
 
 //*******CAN
 
-byte info[8];
 int configsGEN[12];
 int idConfigsDEF[12];
-int dataR2D[1];
 int numConfigDefs;
 
 uint32_t idMens, idR2D = 100;
@@ -86,7 +78,7 @@ int cfgCurrent = 0,           // 1
     cfgCurrentRel,            // 5
     cfgCurrentRelBrake,       // 6
     cfgDO,                    // 7
-    cfgCurrentACMAX = 5,      // 8
+    cfgCurrentACMAX = 3,      // 8
     cfgCurrentACBrakeMAX = 0, // 9
     cfgCurrentDCMAX = 0,      // 10
     cfgCurrentDCBrakeMAX = 0, // 11
