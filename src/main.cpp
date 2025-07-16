@@ -1,5 +1,3 @@
-
-
 #include <Arduino.h>
 #include <MART_CAN.h>
 #include <SPI.h>
@@ -109,10 +107,10 @@ uint32_t tA = millis();
 
 void configureAPPS()
 {
-  apps1Data.valAnalogUP = 1850;   // 2710
-  apps1Data.valAnalogDOWN = 2710; // 1850
-  apps2Data.valAnalogUP = 790;   // 790
-  apps2Data.valAnalogDOWN = 1670;  // 1670
+  apps1Data.valAnalogUP = 790;   // 2710
+  apps1Data.valAnalogDOWN = 1670; // 1850
+  apps2Data.valAnalogUP = 2710;   // 790
+  apps2Data.valAnalogDOWN = 1850;  // 1670
   apps1Data.valScaledUP = apps2Data.valScaledUP = 0;
   apps1Data.valScaledDOWN = apps2Data.valScaledDOWN = 1000;
   apps1Data.range = abs(apps1Data.valAnalogUP - apps1Data.valAnalogDOWN);
@@ -185,14 +183,17 @@ void controlInverter()
   apps1Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_7);
   apps2Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_6);
   stsPot = adc.read(MCP3208::Channel::SINGLE_4);
-  stsPot = map(stsPot, 0, 4096, 0, 1000);
+  stsPot = map(stsPot, 0, 4095, 0, 1000);
   // stsBrake = adc.read(MCP3208::Channel::SINGLE_5);;
 
   //****PROCESAMIENTO
   // APPS
   // Returns a negative number if the APPS is below the safety margin
-  apps1Data.valScaled =
-      map(apps1Data.valAnalog, apps1Data.valAnalogUP - apps1Data.range * cfgAPPSMargin, apps1Data.valAnalogDOWN + apps1Data.range * cfgAPPSMargin, apps1Data.valScaledDOWN, apps1Data.valScaledUP);
+  // apps1Data.valScaled =
+  //     map(apps1Data.valAnalog, apps1Data.valAnalogUP - apps1Data.range * cfgAPPSMargin, apps1Data.valAnalogDOWN + apps1Data.range * cfgAPPSMargin, apps1Data.valScaledDOWN, apps1Data.valScaledUP);
+
+apps1Data.valScaled =
+      map(apps1Data.valAnalog, apps1Data.valAnalogUP, apps1Data.valAnalogDOWN, apps1Data.valScaledUP, apps1Data.valScaledDOWN);
 
   apps2Data.valScaled =
       map(apps2Data.valAnalog, apps2Data.valAnalogUP - apps2Data.range * cfgAPPSMargin, apps2Data.valAnalogDOWN + apps2Data.range * cfgAPPSMargin, apps2Data.valScaledDOWN, apps2Data.valScaledUP);
@@ -204,6 +205,7 @@ void controlInverter()
   // stsR2D = true; //REVISAR
   stsAPPS = 0; //*****COMENTAR
   stsR2D = R2D(true, stsStart, (stsBrake >= cfgBrakeTH));
+  stsR2D=true;
 
   // Target speed/rpm
   if (!stsR2D || stsAPPS != 0)
@@ -215,15 +217,17 @@ void controlInverter()
   {
     RPMtarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, cfgRPMax * 10);
     // currentTarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, 1000); // current target in % * 10
-    currentTarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, cfgCurrentACMAX * 10 * cfgScaleFactor);
-    if (RPMtarget < 0)
-      RPMtarget = 0;
-    else if (RPMtarget > (cfgRPMax * 10))
-      RPMtarget = cfgRPMax * 10;
-    if (currentTarget < 0)
-      currentTarget = 0;
-    else if (currentTarget > cfgCurrentACMAX * 10 * cfgScaleFactor)
-      currentTarget = cfgCurrentACMAX * 10 * cfgScaleFactor;
+    //currentTarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, cfgCurrentACMAX * 10 * cfgScaleFactor);
+    // if (RPMtarget < 0)
+    //   RPMtarget = 0;
+    // else if (RPMtarget > (cfgRPMax * 10))
+    //   RPMtarget = cfgRPMax * 10;
+    // if (currentTarget < 0)
+    //   currentTarget = 0;
+    // else if (currentTarget > cfgCurrentACMAX * 10 * cfgScaleFactor)
+    //   currentTarget = cfgCurrentACMAX * 10 * cfgScaleFactor;
+    currentTarget=apps1Data.valScaled;
+    if(currentTarget<100) currentTarget=0;
   }
   // DRIVE ENABLE
   if (!stsR2D)
@@ -238,13 +242,17 @@ void controlInverter()
 
   cmdDataDriveEN[0] = (byte)cfgDriveEnable;
   cmdDataRPM[0] = RPMtarget;
-  cmdDataCurrent[0] = currentTarget / cfgScaleFactor;
+  //cmdDataCurrent[0] = currentTarget / cfgScaleFactor;
+  cmdDataCurrent[0] = currentTarget;
 
   cmdDataCurrentACMax[0] = cfgCurrentACMAX * 10;
   cmdDataCurrentDCMax[0] = 5 * 10;
   // ******WRITE
 
   CAN.setPacket(idCmdEN, cmdDataDriveEN, 1);
+if(stsR2D)
+{
+
   if (cfgCtrlBySpeed)
   {
 
@@ -252,9 +260,17 @@ void controlInverter()
   }
   else
   {
+    
     CAN.setPacket(idCmdCurrent, cmdDataCurrent, 2);
     CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
   }
+}
+else
+{
+  CAN.DataOUT.removePacket(idCmdEN);
+  CAN.DataOUT.removePacket(idCmdCurrent);
+  CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
+}
 
   // cmdDataCurrentACMax[0] = stsPot;
   // CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
@@ -308,7 +324,7 @@ void debug()
 {
   static uint64_t tAux = millis();
 
-   Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
+  //  Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
   // Serial.println((String) "Brake: " + stsBrake + " TSON: " + stsTSON + " Start: " + stsStart + " R2D: " + stsR2D);
   // Serial.println((String) "Drive Enable: " + cmdDataDriveEN[0] + " Current: " + cmdDataCurrent[0] + " EERPM: " + cmdDataRPM[0]);
 
@@ -318,11 +334,13 @@ void debug()
 
   if ((millis() - tAux) >= 1000)
   {
-    Serial.println((String) "Current=" + cmdDataCurrent[0]);
-    //Serial.println((String) "APPS1 analog: " + apps1Data.valAnalog + " APPS2: " + apps2Data.valAnalog + " Brake= " + stsBrake);
-    Serial.println((String) "Start = " + stsStart);
+     Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
+     Serial.println((String) "Current=" + cmdDataCurrent[0]);
+    Serial.println((String) "APPS1 analog: " + apps1Data.valAnalog + " APPS2: " + apps2Data.valAnalog + " Brake= " + stsBrake);
+    //Serial.println((String) "Start = " + stsStart);
     Serial.println((String) "TSON = " + stsTSON);
     tAux = millis();
+    Serial.println();
   }
 }
 
