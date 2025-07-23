@@ -4,6 +4,7 @@
 #include "global.h"
 #include <Mcp320x.h>
 #include <Adafruit_NeoPixel.h>
+#include "apps.cpp"
 
 //**LED RGB */
 #define LED_PIN 48
@@ -17,6 +18,7 @@
 CAN_BUS CAN(HardwareType::Transciever, 125, 1);
 MCP3208 adc(ADC_VREF, SPI_CS);
 Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+
 
 // PINES
 
@@ -87,7 +89,7 @@ int timeUpdateConfig = 5000, timeUpdateCTRL = 0;
 void configInverterLimits();                                            // Sets CAN packet timers for configuring the inverter's limits
 int getFilteredAnalogRead(int, int sampleSize);                         // Does sliding window average on a given input
 bool R2D(bool tson, bool start, bool brake);                            // Returns de R2D state
-int apps(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc); // Returns the APPS implausability state
+int apps_imp(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc); // Returns the APPS implausability state
 void debug();                                                           // Shows debug info
 void debugShowADC();                                                    // Shows debug ADC info
 void readInverterStatus();                                              // Reads inverter info
@@ -116,6 +118,7 @@ void configureAPPS()
   apps1Data.range = abs(apps1Data.valAnalogUP - apps1Data.valAnalogDOWN);
   apps2Data.range = abs(apps2Data.valAnalogUP - apps2Data.valAnalogDOWN);
 }
+APPS apps(apps1Data.valAnalogUP,apps1Data.valAnalogDOWN,apps2Data.valAnalogUP,apps2Data.valAnalogDOWN,100,3900,10,50);
 
 void setup()
 {
@@ -193,11 +196,7 @@ void controlInverter()
   //     map(apps1Data.valAnalog, apps1Data.valAnalogUP - apps1Data.range * cfgAPPSMargin, apps1Data.valAnalogDOWN + apps1Data.range * cfgAPPSMargin, apps1Data.valScaledDOWN, apps1Data.valScaledUP);
 
 apps1Data.valScaled =
-      map(apps1Data.valAnalog, apps1Data.valAnalogUP, apps1Data.valAnalogDOWN, apps1Data.valScaledUP, apps1Data.valScaledDOWN);
-
-  apps2Data.valScaled =
-      map(apps2Data.valAnalog, apps2Data.valAnalogUP - apps2Data.range * cfgAPPSMargin, apps2Data.valAnalogDOWN + apps2Data.range * cfgAPPSMargin, apps2Data.valScaledDOWN, apps2Data.valScaledUP);
-
+    
   stsAPPS = apps(apps1Data.valScaled, apps2Data.valScaled, 100, 0, 100);
 
   // R2D
@@ -410,7 +409,7 @@ bool R2D(bool tson, bool start, bool brake)
   return r2d;
 }
 
-int apps(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc)
+int apps_imp(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc)
 {
   static unsigned long int t = millis();
   int val = abs(valAPPS1 - valAPPS2);
