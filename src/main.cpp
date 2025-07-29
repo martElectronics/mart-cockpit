@@ -20,11 +20,12 @@ Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 // PINES
 
-int pinTSON = 21, pinStart = 35, pinBUZZ = 15, pinTSON_EXT = 8;
+int pinTSON = 21, pinStart = 15, pinBUZZ = 8, pinTSON_EXT = 9, pinSDC = 16, pinPrueba = 10, pinStsUSB = 2, pinCmdUSB = 14;
 
 //**GLOBAL CONTROL */
 bool cfgCtrlBySpeed = false;
-
+bool cfgCtrlBySerial = false;
+bool cfgCtrlByPctg = true;
 //*******CAN
 
 int configsGEN[12];
@@ -39,7 +40,8 @@ int RPMtarget, cfgRPMax = 1500, currentTarget;
 
 uint32_t idCmdRPM = combineInts(3, idNode);              // 97
 uint32_t idCmdEN = combineInts(12, idNode);              // 385
-uint32_t idCmdCurrent = combineInts(5, idNode);          // ??
+uint32_t idCmdCurrent = combineInts(1, idNode);          // ??
+uint32_t idCmdCurrentPCTG = combineInts(5, idNode);      // ??
 uint32_t idCmdSetMaxACCurrent = combineInts(8, idNode);  // ??
 uint32_t idCmdSetMaxDCCurrent = combineInts(10, idNode); // ??
 // Packet ID 0x20: ERPM, Duty, Input Voltage
@@ -76,9 +78,9 @@ int cfgCurrent = 0,           // 1
     cfgCurrentRel,            // 5
     cfgCurrentRelBrake,       // 6
     cfgDO,                    // 7
-    cfgCurrentACMAX = 3,      // 8
+    cfgCurrentACMAX = 5,      // 8
     cfgCurrentACBrakeMAX = 0, // 9
-    cfgCurrentDCMAX = 0,      // 10
+    cfgCurrentDCMAX = 5,      // 10
     cfgCurrentDCBrakeMAX = 0, // 11
     cfgDriveEnable = 0;       // 12
 
@@ -95,26 +97,28 @@ uint32_t combineInts(uint32_t int1, uint32_t int2);                     // Calcu
 void fillConfigsArray();                                                // Makes a copy of the configuration
 void parseConfigIds(char *input);                                       // Reads the IDs set by the user to send periodacally
 void controlInverter();
+void processSerialCommand(int *p_var, int *c_var, int *md_var, int *ma_var, bool *mode, bool enable);
 
 // PRG
-bool stsTSON, stsStart, stsR2D, stsAPPS;
-int stsBrake, stsPot;
-int cfgBrakeTH = 500, cfgChannelAPPS1 = 0, cfgChannelAPPS2 = 1, cfgChannelBrake = 2, cfgChannelSteering = 3;
-int cfgAPPSdiff = 10, cfgAPPSdesc = 5000, cfgAPPSdescScaled = 200, cfgAPPSmax = 0, cfgTimeSoundR2D = 1100;
+bool stsTSON, stsStart, stsR2D, stsAPPS, stsSDC;
+int stsBrake, stsPot, stsSDCAnalog;
+int cfgBrakeTH = 550, cfgChannelAPPS1 = 0, cfgChannelAPPS2 = 1, cfgChannelBrake = 2, cfgChannelSteering = 3;
+int cfgAPPSdiff = 10, cfgAPPSdesc = 5000, cfgAPPSdescScaled = 200, cfgAPPSmax = 0, cfgTimeSoundR2D = 2000;
 float cfgAPPSMargin = 0.1; // (0.1=10%)
 int cfgScaleFactor = 1000; // Aumenta resolución al hacer map(), luego se divide por el mismo factor en la consigna final
 uint32_t tA = millis();
 
 void configureAPPS()
 {
-  apps1Data.valAnalogUP = 790;   // 2710
-  apps1Data.valAnalogDOWN = 1670; // 1850
-  apps2Data.valAnalogUP = 2710;   // 790
-  apps2Data.valAnalogDOWN = 1850;  // 1670
+  apps1Data.valAnalogUP = 2270;   // 2275
+  apps1Data.valAnalogDOWN = 2030; // 1850
+  apps2Data.valAnalogUP = 924;    // 790
+  apps2Data.valAnalogDOWN = 1920; // 1670
   apps1Data.valScaledUP = apps2Data.valScaledUP = 0;
   apps1Data.valScaledDOWN = apps2Data.valScaledDOWN = 1000;
   apps1Data.range = abs(apps1Data.valAnalogUP - apps1Data.valAnalogDOWN);
   apps2Data.range = abs(apps2Data.valAnalogUP - apps2Data.valAnalogDOWN);
+  // brake 422 1350
 }
 
 void setup()
@@ -126,6 +130,7 @@ void setup()
   pinMode(pinTSON, INPUT);
   pinMode(pinTSON_EXT, INPUT);
   pinMode(pinBUZZ, OUTPUT);
+  pinMode(pinSDC, INPUT);
 
   // INIT
   parseConfigIds(packetIDStoConfig);
@@ -172,6 +177,10 @@ void loop()
 void controlInverter()
 {
   tA = millis();
+  //****SERIAL
+  static int serialP = 0;
+  static int serialC = 0;
+  static bool serialEnableContol = false;
 
   //****LECTURA
   CAN.receive();
@@ -180,23 +189,17 @@ void controlInverter()
 
   stsBrake = adc.read(MCP3208::Channel::SINGLE_5);
   // stsBrake = cfgBrakeTH ;
-  apps1Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_7);
-  apps2Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_6);
+  apps1Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_2);
+  apps2Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_3);
   stsPot = adc.read(MCP3208::Channel::SINGLE_4);
   stsPot = map(stsPot, 0, 4095, 0, 1000);
-  // stsBrake = adc.read(MCP3208::Channel::SINGLE_5);;
+  stsSDCAnalog = analogRead(pinSDC);
 
-  //****PROCESAMIENTO
-  // APPS
-  // Returns a negative number if the APPS is below the safety margin
-  // apps1Data.valScaled =
-  //     map(apps1Data.valAnalog, apps1Data.valAnalogUP - apps1Data.range * cfgAPPSMargin, apps1Data.valAnalogDOWN + apps1Data.range * cfgAPPSMargin, apps1Data.valScaledDOWN, apps1Data.valScaledUP);
-
-apps1Data.valScaled =
+  apps1Data.valScaled =
       map(apps1Data.valAnalog, apps1Data.valAnalogUP, apps1Data.valAnalogDOWN, apps1Data.valScaledUP, apps1Data.valScaledDOWN);
 
   apps2Data.valScaled =
-      map(apps2Data.valAnalog, apps2Data.valAnalogUP - apps2Data.range * cfgAPPSMargin, apps2Data.valAnalogDOWN + apps2Data.range * cfgAPPSMargin, apps2Data.valScaledDOWN, apps2Data.valScaledUP);
+      map(apps2Data.valAnalog, apps2Data.valAnalogUP, apps2Data.valAnalogDOWN, apps2Data.valScaledUP, apps2Data.valScaledDOWN);
 
   stsAPPS = apps(apps1Data.valScaled, apps2Data.valScaled, 100, 0, 100);
 
@@ -205,7 +208,8 @@ apps1Data.valScaled =
   // stsR2D = true; //REVISAR
   stsAPPS = 0; //*****COMENTAR
   stsR2D = R2D(true, stsStart, (stsBrake >= cfgBrakeTH));
-  stsR2D=true;
+  //stsR2D=true;
+  // stsR2D=true;
 
   // Target speed/rpm
   if (!stsR2D || stsAPPS != 0)
@@ -216,24 +220,25 @@ apps1Data.valScaled =
   else if (stsR2D && stsAPPS == 0)
   {
     RPMtarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, cfgRPMax * 10);
-    // currentTarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, 1000); // current target in % * 10
-    //currentTarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, cfgCurrentACMAX * 10 * cfgScaleFactor);
-    // if (RPMtarget < 0)
-    //   RPMtarget = 0;
-    // else if (RPMtarget > (cfgRPMax * 10))
-    //   RPMtarget = cfgRPMax * 10;
-    // if (currentTarget < 0)
-    //   currentTarget = 0;
-    // else if (currentTarget > cfgCurrentACMAX * 10 * cfgScaleFactor)
-    //   currentTarget = cfgCurrentACMAX * 10 * cfgScaleFactor;
-    currentTarget=apps1Data.valScaled;
-    if(currentTarget<100) currentTarget=0;
+
+    if (!cfgCtrlBySerial)
+    {
+      currentTarget = apps2Data.valScaled;
+     // cfgCurrentACMAX = 180;
+      //cfgCurrentDCMAX = 15;
+      if (currentTarget < 100)
+        currentTarget = 0;
+      else if (currentTarget > 1000)
+        currentTarget = 1000;
+    }
+    else
+    {
+    }
   }
   // DRIVE ENABLE
   if (!stsR2D)
   {
     cfgDriveEnable = 0;
-    currentTarget = 0;
   }
   else
   {
@@ -242,41 +247,54 @@ apps1Data.valScaled =
 
   cmdDataDriveEN[0] = (byte)cfgDriveEnable;
   cmdDataRPM[0] = RPMtarget;
-  //cmdDataCurrent[0] = currentTarget / cfgScaleFactor;
   cmdDataCurrent[0] = currentTarget;
 
   cmdDataCurrentACMax[0] = cfgCurrentACMAX * 10;
-  cmdDataCurrentDCMax[0] = 5 * 10;
+  cmdDataCurrentDCMax[0] = cfgCurrentDCMAX * 10;
   // ******WRITE
 
   CAN.setPacket(idCmdEN, cmdDataDriveEN, 1);
-if(stsR2D)
-{
-
-  if (cfgCtrlBySpeed)
+  if (stsR2D)
   {
 
-    // CAN.setPacket(idCmdRPM, cmdDataRPM, 2);
+    if (cfgCtrlBySpeed)
+    {
+
+      // CAN.setPacket(idCmdRPM, cmdDataRPM, 2);
+    }
+    else
+    {
+      if (cfgCtrlByPctg)
+      {
+
+        CAN.setPacket(idCmdCurrentPCTG, cmdDataCurrent, 2);
+        CAN.DataOUT.removePacket(idCmdCurrent);
+      }
+      else
+      {
+        CAN.setPacket(idCmdCurrent, cmdDataCurrent, 2);
+        CAN.DataOUT.removePacket(idCmdCurrentPCTG);
+      }
+      CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
+      CAN.setPacket(idCmdSetMaxDCCurrent, cmdDataCurrentDCMax, 4);
+    }
   }
+
   else
   {
-    
-    CAN.setPacket(idCmdCurrent, cmdDataCurrent, 2);
-    CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
+    CAN.DataOUT.removePacket(idCmdEN);
+    CAN.DataOUT.removePacket(idCmdCurrentPCTG);
+    CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
   }
-}
-else
-{
-  CAN.DataOUT.removePacket(idCmdEN);
-  CAN.DataOUT.removePacket(idCmdCurrent);
-  CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
-}
 
   // cmdDataCurrentACMax[0] = stsPot;
   // CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
 
+  processSerialCommand(&currentTarget, &currentTarget,&cfgCurrentDCMAX, &cfgCurrentACMAX,&cfgCtrlByPctg, cfgCtrlBySerial);
+
   CAN.send();
 }
+
 void readInverterStatus()
 {
   static uint64_t tAux = millis();
@@ -332,38 +350,23 @@ void debug()
   // Serial.println();
   // delay(500);
 
-  if ((millis() - tAux) >= 1000)
+  if ((millis() - tAux) >= 3000)
   {
-     Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
-     Serial.println((String) "Current=" + cmdDataCurrent[0]);
+    Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
+    Serial.println((String) "Current=" + cmdDataCurrent[0]);
     Serial.println((String) "APPS1 analog: " + apps1Data.valAnalog + " APPS2: " + apps2Data.valAnalog + " Brake= " + stsBrake);
-    //Serial.println((String) "Start = " + stsStart);
-    Serial.println((String) "TSON = " + stsTSON);
-    tAux = millis();
+    Serial.println((String) "Start = " + stsStart);
+    Serial.println((String) "R2D = " + stsR2D);
+    // Serial.println((String) "TSON = " + stsTSON);
+    // Serial.println((String) "SDC = " + stsSDCAnalog);
+    Serial.println((String) "Control by serial = " + cfgCtrlBySerial);
+    Serial.println((String) "Control by PCTG = " + cfgCtrlByPctg);
+    Serial.println((String) "MAX DC = " + cfgCurrentDCMAX+ " MAX AC = " + cfgCurrentACMAX);
     Serial.println();
+    // CAN.printReceivedIds();
+    tAux = millis();
+    Serial.println((String) "ID= " + idCmdCurrentPCTG);
   }
-}
-
-void debugShowADC()
-{
-  // // Serial.println("-----------------------------------------------------------");
-  // Serial.print("AIN0: ");
-  // Serial.print(adc0);
-  // Serial.print("  ");
-  // Serial.print(volts0);
-  // Serial.println("V");
-  // Serial.print("AIN1: ");
-  // Serial.print(adc1);
-  // Serial.print("  ");
-  // Serial.print(volts1);
-  // Serial.println("V");
-  // // Serial.print("AIN2: "); Serial.print(adc2); Serial.print("  "); Serial.print(volts2); Serial.println("V");
-  // Serial.print("AIN3: ");
-  // Serial.print(adc3);
-  // Serial.print("  ");
-  // Serial.print(volts3);
-  // Serial.println("V");
-  // delay(500);
 }
 
 bool R2D(bool tson, bool start, bool brake)
@@ -473,41 +476,6 @@ void configInverterLimits()
   }
 }
 
-int getFilteredAnalogRead(int val, int sampleSize)
-{
-  static int *readings = new int[sampleSize]; // Array to store the samples
-  static int readIndex = 0;                   // Index of the current sample
-  static int total = 0;                       // Running total
-  static bool initialized = false;            // To check if the array is initialized
-
-  // Initialize the readings array once
-  if (!initialized)
-  {
-    for (int i = 0; i < sampleSize; i++)
-    {
-      readings[i] = 0;
-    }
-    initialized = true;
-  }
-
-  // Subtract the last reading
-  total -= readings[readIndex];
-
-  // Read the next sample
-  readings[readIndex] = val;
-
-  // Add the reading to the total
-  total += readings[readIndex];
-
-  // Advance to the next position in the array
-  readIndex = (readIndex + 1) % sampleSize;
-
-  // Calculate the average
-  int average = total / sampleSize;
-
-  return average;
-}
-
 void fillConfigsArray()
 {
   configsGEN[0] = cfgCurrent;
@@ -562,5 +530,83 @@ void parseConfigIds(char *input)
   if (numberInProgress && index < 12)
   {
     idConfigsDEF[index] = currentNumber;
+  }
+}
+
+void processSerialCommand(int *p_var, int *c_var, int *md_var, int *ma_var, bool *mode, bool enable)
+{
+  // Proceed only if there is data available to read in the serial buffer.
+  if (Serial.available() > 0)
+  {
+
+    // Read the command part of the input as a String until a space is found.
+    String command = Serial.readStringUntil(' ');
+    command.trim(); // Clean up any whitespace
+
+    // Only proceed if a command was actually read.
+    if (command.length() > 0)
+    {
+      // Serial.parseInt() conveniently skips any non-numeric characters (like the space)
+      // and reads the next valid integer from the stream.
+      // NOTE: This is a blocking function with a 1-second default timeout.
+      long receivedValue = Serial.parseInt();
+
+      // Use an if-else if structure to check the received command string.
+      if (command == "p")
+      {
+        if (enable)
+        {
+          *p_var = receivedValue;
+          Serial.print("OK: Set 'p' variable to ");
+          Serial.println(*p_var);
+          *mode = true;
+        }
+        else
+        {
+          Serial.println("**********************Contorl by serial Not allowed*******");
+        }
+      }
+      else if (command == "c")
+      {
+        if (enable)
+        {
+
+          *c_var = receivedValue;
+          Serial.print("OK: Set 'c' variable to ");
+          Serial.println(*c_var);
+          *mode = false;
+        }
+        else
+        {
+          Serial.println("**********************Contorl by serial Not allowed*******");
+        }
+      }
+      else if (command == "md")
+      {
+        *md_var = receivedValue;
+        Serial.print("OK: Set 'md' variable to ");
+        Serial.println(*md_var);
+      }
+      else if (command == "ma")
+      {
+        *ma_var = receivedValue;
+        Serial.print("OK: Set 'ma' variable to ");
+        Serial.println(*ma_var);
+      }
+      else
+      {
+        // Handle cases where the command is not recognized.
+        Serial.print("Error: Unknown command '");
+        Serial.print(command);
+        Serial.println("'.");
+      }
+    }
+
+    // Clear any remaining data from the input buffer for this line to
+    // avoid processing leftover characters on the next loop iteration.
+    while (Serial.available() > 0)
+    {
+      Serial.read();
+    }
   }
 }
