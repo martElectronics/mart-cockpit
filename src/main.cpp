@@ -78,9 +78,9 @@ int cfgCurrent = 0,           // 1
     cfgCurrentRel,            // 5
     cfgCurrentRelBrake,       // 6
     cfgDO,                    // 7
-    cfgCurrentACMAX = 5,      // 8
+    cfgCurrentACMAX = 190,      // 8
     cfgCurrentACBrakeMAX = 0, // 9
-    cfgCurrentDCMAX = 5,      // 10
+    cfgCurrentDCMAX = 60,      // 10
     cfgCurrentDCBrakeMAX = 0, // 11
     cfgDriveEnable = 0;       // 12
 
@@ -101,12 +101,26 @@ void processSerialCommand(int *p_var, int *c_var, int *md_var, int *ma_var, bool
 
 // PRG
 bool stsTSON, stsStart, stsR2D, stsAPPS, stsSDC;
-int stsBrake, stsPot, stsSDCAnalog;
+int stsBrake,stsBrake2, stsPot, stsSDCAnalog, stsVbatRAW;
 int cfgBrakeTH = 550, cfgChannelAPPS1 = 0, cfgChannelAPPS2 = 1, cfgChannelBrake = 2, cfgChannelSteering = 3;
 int cfgAPPSdiff = 10, cfgAPPSdesc = 5000, cfgAPPSdescScaled = 200, cfgAPPSmax = 0, cfgTimeSoundR2D = 2000;
 float cfgAPPSMargin = 0.1; // (0.1=10%)
 int cfgScaleFactor = 1000; // Aumenta resolución al hacer map(), luego se divide por el mismo factor en la consigna final
 uint32_t tA = millis();
+
+// CAN DATA
+
+unsigned long int idBMSStatus=10;
+unsigned long int idBMSMaxValues=11;
+unsigned long int idAPPSState=1163;
+unsigned long int idBrakeState=1164;
+unsigned long int idVCUSignals=1166;
+
+byte canDataBMSStatus[8];
+
+uint16_t CANAppsState[4];
+uint16_t CANBrakeState[4];
+uint8_t CANVCUSignals[8];
 
 void configureAPPS()
 {
@@ -184,16 +198,29 @@ void controlInverter()
 
   //****LECTURA
   CAN.receive();
-  stsTSON = digitalRead(pinTSON_EXT); // cambiado por logica
+  CAN.getPacket(idBMSStatus,canDataBMSStatus,8);
+
+
+
+
+
+
+  CAN.send();
+
+
+
+  stsTSON = canDataBMSStatus[2];//digitalRead(pinTSON_EXT); // cambiado por logica
   stsStart = !digitalRead(pinStart);
 
-  stsBrake = adc.read(MCP3208::Channel::SINGLE_5);
+  stsBrake = adc.read(MCP3208::Channel::SINGLE_4);
+  stsBrake2 = adc.read(MCP3208::Channel::SINGLE_5);
   // stsBrake = cfgBrakeTH ;
   apps1Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_2);
   apps2Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_3);
   stsPot = adc.read(MCP3208::Channel::SINGLE_4);
   stsPot = map(stsPot, 0, 4095, 0, 1000);
   stsSDCAnalog = analogRead(pinSDC);
+  stsVbatRAW=adc.read(MCP3208::Channel::SINGLE_6);
 
   apps1Data.valScaled =
       map(apps1Data.valAnalog, apps1Data.valAnalogUP, apps1Data.valAnalogDOWN, apps1Data.valScaledUP, apps1Data.valScaledDOWN);
@@ -207,7 +234,7 @@ void controlInverter()
   // stsR2D = stsStart; //*****COMENTAR
   // stsR2D = true; //REVISAR
   stsAPPS = 0; //*****COMENTAR
-  stsR2D = R2D(true, stsStart, (stsBrake >= cfgBrakeTH));
+  stsR2D = R2D(true, stsStart, (stsBrake2 >= cfgBrakeTH));
   //stsR2D=true;
   // stsR2D=true;
 
@@ -275,7 +302,7 @@ void controlInverter()
         CAN.setPacket(idCmdCurrent, cmdDataCurrent, 2);
         CAN.DataOUT.removePacket(idCmdCurrentPCTG);
       }
-      CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
+     CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
       CAN.setPacket(idCmdSetMaxDCCurrent, cmdDataCurrentDCMax, 4);
     }
   }
@@ -292,6 +319,22 @@ void controlInverter()
 
   processSerialCommand(&currentTarget, &currentTarget,&cfgCurrentDCMAX, &cfgCurrentACMAX,&cfgCtrlByPctg, cfgCtrlBySerial);
 
+
+ CANAppsState[0]=apps1Data.valScaled;
+ CANAppsState[1]=apps2Data.valScaled;
+ CANAppsState[2]=apps1Data.valAnalog;
+ CANAppsState[3]=apps2Data.valAnalog;
+ CANBrakeState[0]=CANBrakeState[1]=77777;
+ CANBrakeState[2]=stsBrake;
+CANBrakeState[3]=stsBrake2;
+CANVCUSignals[0]=stsVbatRAW;
+
+CAN.setPacket(idAPPSState,CANAppsState,4);
+CAN.setPacket(idBrakeState,CANBrakeState,4);
+CAN.setPacket(idVCUSignals,CANVCUSignals,8);
+
+
+  
   CAN.send();
 }
 
@@ -354,7 +397,7 @@ void debug()
   {
     Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
     Serial.println((String) "Current=" + cmdDataCurrent[0]);
-    Serial.println((String) "APPS1 analog: " + apps1Data.valAnalog + " APPS2: " + apps2Data.valAnalog + " Brake= " + stsBrake);
+    Serial.println((String) "APPS1 analog: " + apps1Data.valAnalog + " APPS2: " + apps2Data.valAnalog + " Brake= " + stsBrake + " Brake2= " + stsBrake2);
     Serial.println((String) "Start = " + stsStart);
     Serial.println((String) "R2D = " + stsR2D);
     // Serial.println((String) "TSON = " + stsTSON);
