@@ -5,3 +5,8 @@
 .vscode/ipch
 .DS_Store
 
+.vscode/launch.json
+.vscode/extensions.json
+.vscode/c_cpp_properties.json
+.pio/build/esp32dev/idedata.json
+.pio/build/project.checksum
