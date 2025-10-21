@@ -1,6 +1,6 @@
 #include <Arduino.h>
 #include <MART_CAN.h>
-#include <SPI.h>
+
 #include "global.h"
 #include <Mcp320x.h>
 #include <Adafruit_NeoPixel.h>
@@ -27,7 +27,7 @@ const MCP3208::Channel APPS2_CHANNEL = MCP3208::Channel::SINGLE_3;
 PairedAnalogSensorConfig appsConfig;
 
 // 2. Declarar un puntero para el objeto
-PairedAnalogSensor* apps;
+PairedAnalogSensor* apps_p;
 
 // PINES
 
@@ -101,10 +101,11 @@ void configInverterLimits();                                            // Sets 
 int getFilteredAnalogRead(int, int sampleSize);                         // Does sliding window average on a given input
 bool R2D(bool tson, bool start, bool brake);                            // Returns de R2D state
 int apps(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc); // Returns the APPS implausability state
+void appsTesting();
 void debug();                                                           // Shows debug info
 void debugShowADC();                                                    // Shows debug ADC info
 void readInverterStatus();                                              // Reads inverter info
-uint32_t combineInts(uint32_t int1, uint32_t int2);                     // Calculates the inverter CAN packets IDs
+// uint32_t combineInts(uint32_t int1, uint32_t int2);                     // Calculates the inverter CAN packets IDs
 void fillConfigsArray();                                                // Makes a copy of the configuration
 void parseConfigIds(char *input);                                       // Reads the IDs set by the user to send periodacally
 void controlInverter();
@@ -148,27 +149,45 @@ void configureAPPS()
   // --- NUEVA CONFIGURACIÓN USANDO LA LIBRERÍA PairedAnalogSensor ---
 
   // --- Configuración del SENSOR 1 (APPS1) ---
-  appsConfig.cfgSensor1.cfgAdcMinNormal = 2030;
-  appsConfig.cfgSensor1.cfgAdcMaxNormal = 2270;
-  appsConfig.cfgSensor1.cfgScaledOutputMin = 0;
-  appsConfig.cfgSensor1.cfgScaledOutputMax = 100;
-  appsConfig.cfgSensor1.cfgFilterType = FilterType::EWMA;
-  appsConfig.cfgSensor1.cfgFilterAlpha = 0.3;
+
+    appsConfig.cfgSensor1.cfgSensorVoltage = 4.09;            // Voltaje de operación del sensor (e.g., 3.3, 5.0)
+    appsConfig.cfgSensor1.cfgAdcResolution = 4095;      // Resolución del ADC (e.g., 4095 para 12-bit)
+    appsConfig.cfgSensor1.cfgScaledOutputMin = 0;         // Valor mínimo de la salida escalada
+    appsConfig.cfgSensor1.cfgScaledOutputMax = 100;       // Valor máximo de la salida escalada
+    appsConfig.cfgSensor1.cfgAdcMinNormal = 400;        // Valor del ADC con el sensor en reposo
+    appsConfig.cfgSensor1.cfgAdcMaxNormal = 1290;        // Valor del ADC con el sensor actuado al máximo
+    appsConfig.cfgSensor1.cfgLowerMarginPercent = 5.0;       // Porcentaje inferior donde la salida es cfgScaledOutputMin
+    appsConfig.cfgSensor1.cfgUpperMarginPercent = 5.0;       // Porcentaje superior donde la salida es cfgScaledOutputMax
+    appsConfig.cfgSensor1.cfgAdcShortGND = 10;            // Umbral para cortocircuito a GND
+    appsConfig.cfgSensor1.cfgAdcShortVCC = 4085;          // Umbral para cortocircuito a VCC
+    appsConfig.cfgSensor1.cfgImplausibilityTimeout = 100;
+    appsConfig.cfgSensor1.cfgFilterType = FilterType::EWMA;
+    appsConfig.cfgSensor1.cfgFilterSize = 10;              // Tamaño para Block Avg o Sliding Window
+    appsConfig.cfgSensor1.cfgFilterAlpha = 0.2;              // Factor de suavizado para EWMA (0 < alpha < 1)
+
 
   // --- Configuración del SENSOR 2 (APPS2) ---
-  // Rango invertido, como en tu ejemplo de configuración
-  appsConfig.cfgSensor2.cfgAdcMinNormal = 1920; 
-  appsConfig.cfgSensor2.cfgAdcMaxNormal = 924; // ¡Observa que min > max! La librería lo maneja.
-  appsConfig.cfgSensor2.cfgScaledOutputMin = 0;
-  appsConfig.cfgSensor2.cfgScaledOutputMax = 100;
-  appsConfig.cfgSensor2.cfgFilterType = FilterType::EWMA;
-  appsConfig.cfgSensor2.cfgFilterAlpha = 0.3;
+  
+    appsConfig.cfgSensor2.cfgSensorVoltage = 1.54;            // Voltaje de operación del sensor (e.g., 3.3, 5.0)
+    appsConfig.cfgSensor2.cfgAdcResolution = 4095;        // Resolución del ADC (e.g., 4095 para 12-bit)
+    appsConfig.cfgSensor2.cfgScaledOutputMin = 0;         // Valor mínimo de la salida escalada
+    appsConfig.cfgSensor2.cfgScaledOutputMax = 100;       // Valor máximo de la salida escalada
+    appsConfig.cfgSensor2.cfgAdcMinNormal = 3100;        // Valor del ADC con el sensor en reposo
+    appsConfig.cfgSensor2.cfgAdcMaxNormal = 3340;        // Valor del ADC con el sensor actuado al máximo
+    appsConfig.cfgSensor2.cfgLowerMarginPercent = 5.0;       // Porcentaje inferior donde la salida es cfgScaledOutputMin
+    appsConfig.cfgSensor2.cfgUpperMarginPercent = 5.0;       // Porcentaje superior donde la salida es cfgScaledOutputMax
+    appsConfig.cfgSensor2.cfgAdcShortGND = 10;            // Umbral para cortocircuito a GND
+    appsConfig.cfgSensor2.cfgAdcShortVCC = 4085;          // Umbral para cortocircuito a VCC
+    appsConfig.cfgSensor2.cfgImplausibilityTimeout = 100;
+    appsConfig.cfgSensor2.cfgFilterType = FilterType::EWMA;
+    appsConfig.cfgSensor2.cfgFilterSize = 10;              // Tamaño para Block Avg o Sliding Window
+    appsConfig.cfgSensor2.cfgFilterAlpha = 0.2;              // Factor de suavizado para EWMA (0 < alpha < 1)
 
   // --- Configuración de la Coherencia del PAR ---
   appsConfig.cfgMaxDeviationPercent = 10.0;
 
   // 3. Crear el objeto
-  apps = new PairedAnalogSensor(appsConfig);
+  apps_p = new PairedAnalogSensor(appsConfig);
 
   Serial.println("Ejemplo de PairedAnalogSensor (APPS) con MCP3208");
 }
@@ -700,27 +719,27 @@ void appsTesting(){
   uint16_t raw2 = adc.read(APPS2_CHANNEL);
 
   // Actualizar el objeto con ambas lecturas
-  apps->update(raw1, raw2);
+  apps_p->update(raw1, raw2);
 
   // Mostrar información
   Serial.print("APPS1(raw):");
   Serial.print(raw1);
   Serial.print("->Scl:");
-  Serial.print(apps->getSensor1().getScaledValue(), 1);
+  Serial.print(apps_p->getSensor1().getScaledValue(), 1);
 
   Serial.print(" | APPS2(raw):");
   Serial.print(raw2);
   Serial.print("->Scl:");
-  Serial.print(apps->getSensor2().getScaledValue(), 1); 
+  Serial.print(apps_p->getSensor2().getScaledValue(), 1); 
 
   Serial.print(" | State: ");
-  if (apps->getSensorState() == SensorState::NORMAL) {
+  if (apps_p->getSensorState() == SensorState::NORMAL) {
     Serial.print("OK -> Pedal:");
-    Serial.print(apps->getAverageValue(), 1);
+    Serial.print(apps_p->getAverageValue(), 1);
     Serial.println("%");
   } else {
     Serial.print("FAULT! -> ");
-    switch(apps->getImplausibilityType()) {
+    switch(apps_p->getImplausibilityType()) {
       case PairedImplausibilityType::SENSOR1_FAULT:
         Serial.println("S1 Fault"); break;
       case PairedImplausibilityType::SENSOR2_FAULT:
@@ -732,5 +751,5 @@ void appsTesting(){
     }
   }
 
-  delay(100);
+  delay(200);
 }
