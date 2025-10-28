@@ -16,7 +16,8 @@ enum class ImplausibilityType {
 // Enum para el estado actual del sensor
 enum class SensorState {
     NORMAL,
-    IMPLAUSIBILITY
+    IMPLAUSIBILITY,
+    PENDING
 };
 
 // Enum para seleccionar el método de filtrado
@@ -64,7 +65,8 @@ public:
     AnalogSensor(const AnalogSensorConfig& config);
 
     // Método principal para actualizar el estado con una nueva lectura del ADC
-    void update(uint16_t rawValue);
+    // Para devolver los valores lo hace por los parametros pasados por referencia
+    void update(uint16_t rawValue, float& filteredValue, float& scaledValue, SensorState& state);
 
     // Getters para obtener los valores procesados y el estado
     float getScaledValue() const;
@@ -75,7 +77,7 @@ public:
 
 private:
     // Atributos privados (prefijo 'm' según convenio MART)
-    AnalogSensorConfig mConfig;
+    const AnalogSensorConfig& mConfig;
     uint16_t mRawValue;
     float mFilteredValue;
     float mScaledValue;

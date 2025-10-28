@@ -1,6 +1,7 @@
 #include "AnalogSensor.h"
 
 // Constructor que inicializa la clase con la configuración proporcionada
+// La estructura AnalogSensorConfig es guardada como una referencia constante
 AnalogSensor::AnalogSensor(const AnalogSensorConfig& config)
     : mConfig(config),
       mRawValue(0),
@@ -20,7 +21,7 @@ AnalogSensor::AnalogSensor(const AnalogSensorConfig& config)
 }
 
 // Método principal llamado en cada ciclo para procesar la nueva lectura
-void AnalogSensor::update(uint16_t rawValue) {
+void AnalogSensor::update(uint16_t rawValue, float& filteredValue, float& scaledValue, SensorState& state) {
     mRawValue = rawValue;
 
     // 1. Filtrar la señal
@@ -31,6 +32,11 @@ void AnalogSensor::update(uint16_t rawValue) {
 
     // 3. Comprobar implausibilidades
     mProcessImplausibility();
+
+    // Devuelve los valores
+    filteredValue = getFilteredValue();
+    scaledValue = getScaledValue();
+    state = getSensorState();
 }
 
 // Implementación del filtrado
@@ -142,7 +148,18 @@ void AnalogSensor::mProcessImplausibility() {
 
 // Getters
 float AnalogSensor::getScaledValue() const { return mScaledValue; }
+
 float AnalogSensor::getFilteredValue() const { return mFilteredValue; }
-SensorState AnalogSensor::getSensorState() const { return mState; }
+
+SensorState AnalogSensor::getSensorState() const { 
+    // Devolverá un estado PENDING solo cuando se este esperando un nuevo dato 
+    // para decidir si existe una implausibilidad
+    if (mIsImplausibilityTiming) {
+        return SensorState::PENDING;
+    }
+    return mState; 
+}
+
 ImplausibilityType AnalogSensor::getImplausibilityType() const { return mImplausibilityType; }
+
 uint16_t AnalogSensor::getRawValue() const { return mRawValue; }
