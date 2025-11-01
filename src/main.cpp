@@ -20,7 +20,7 @@ Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 // PINES
 
-int pinTSON = 21, pinStart = 15, pinBUZZ = 8, pinTSON_EXT = 9, pinSDC = 16, pinPrueba = 10, pinStsUSB = 2, pinCmdUSB = 14;
+int pinTSON = 21, pinStart = 15, pinBUZZ = 8, pinTSON_EXT = 9, pinSDC = 16;
 
 //**GLOBAL CONTROL */
 bool cfgCtrlBySpeed = false;
@@ -196,31 +196,25 @@ void controlInverter()
   static int serialC = 0;
   static bool serialEnableContol = false;
 
-  //****LECTURA
+   //****LECTURA GPIO
+   stsStart = !digitalRead(pinStart);
+  stsSDCAnalog = adc.read(MCP3208::Channel::SINGLE_1);
+   apps1Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_2);
+    apps2Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_3);
+  stsBrake = adc.read(MCP3208::Channel::SINGLE_4);
+  stsBrake2 = adc.read(MCP3208::Channel::SINGLE_5);
+    stsVbatRAW=adc.read(MCP3208::Channel::SINGLE_6);
+  
+ 
+
+  //****LECTURA CAN
   CAN.receive();
   CAN.getPacket(idBMSStatus,canDataBMSStatus,8);
 
 
 
-
-
-
-  CAN.send();
-
-
-
-  stsTSON = canDataBMSStatus[2];//digitalRead(pinTSON_EXT); // cambiado por logica
-  stsStart = !digitalRead(pinStart);
-
-  stsBrake = adc.read(MCP3208::Channel::SINGLE_4);
-  stsBrake2 = adc.read(MCP3208::Channel::SINGLE_5);
-  // stsBrake = cfgBrakeTH ;
-  apps1Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_2);
-  apps2Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_3);
-  stsPot = adc.read(MCP3208::Channel::SINGLE_4);
-  stsPot = map(stsPot, 0, 4095, 0, 1000);
-  stsSDCAnalog = analogRead(pinSDC);
-  stsVbatRAW=adc.read(MCP3208::Channel::SINGLE_6);
+  
+  //****Procesamiento
 
   apps1Data.valScaled =
       map(apps1Data.valAnalog, apps1Data.valAnalogUP, apps1Data.valAnalogDOWN, apps1Data.valScaledUP, apps1Data.valScaledDOWN);
@@ -230,13 +224,12 @@ void controlInverter()
 
   stsAPPS = apps(apps1Data.valScaled, apps2Data.valScaled, 100, 0, 100);
 
-  // R2D
+  // *R2D
   // stsR2D = stsStart; //*****COMENTAR
   // stsR2D = true; //REVISAR
   stsAPPS = 0; //*****COMENTAR
   stsR2D = R2D(true, stsStart, (stsBrake2 >= cfgBrakeTH));
-  //stsR2D=true;
-  // stsR2D=true;
+
 
   // Target speed/rpm
   if (!stsR2D || stsAPPS != 0)
@@ -314,9 +307,6 @@ void controlInverter()
     CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
   }
 
-  // cmdDataCurrentACMax[0] = stsPot;
-  // CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
-
   processSerialCommand(&currentTarget, &currentTarget,&cfgCurrentDCMAX, &cfgCurrentACMAX,&cfgCtrlByPctg, cfgCtrlBySerial);
 
 
@@ -393,22 +383,59 @@ void debug()
   // Serial.println();
   // delay(500);
 
-  if ((millis() - tAux) >= 3000)
+  if ((millis() - tAux) >= 1000)
   {
-    Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
-    Serial.println((String) "Current=" + cmdDataCurrent[0]);
-    Serial.println((String) "APPS1 analog: " + apps1Data.valAnalog + " APPS2: " + apps2Data.valAnalog + " Brake= " + stsBrake + " Brake2= " + stsBrake2);
-    Serial.println((String) "Start = " + stsStart);
-    Serial.println((String) "R2D = " + stsR2D);
-    // Serial.println((String) "TSON = " + stsTSON);
-    // Serial.println((String) "SDC = " + stsSDCAnalog);
-    Serial.println((String) "Control by serial = " + cfgCtrlBySerial);
-    Serial.println((String) "Control by PCTG = " + cfgCtrlByPctg);
-    Serial.println((String) "MAX DC = " + cfgCurrentDCMAX+ " MAX AC = " + cfgCurrentACMAX);
-    Serial.println();
-    // CAN.printReceivedIds();
-    tAux = millis();
-    Serial.println((String) "ID= " + idCmdCurrentPCTG);
+    // Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
+    // Serial.println((String) "Current=" + cmdDataCurrent[0]);
+    // Serial.println((String) "APPS1 analog: " + apps1Data.valAnalog + " APPS2: " + apps2Data.valAnalog + " Brake= " + stsBrake + " Brake2= " + stsBrake2);
+    // Serial.println((String) "Start = " + stsStart);
+    // Serial.println((String) "R2D = " + stsR2D);
+    // // Serial.println((String) "TSON = " + stsTSON);
+    // // Serial.println((String) "SDC = " + stsSDCAnalog);
+    // Serial.println((String) "Control by serial = " + cfgCtrlBySerial);
+    // Serial.println((String) "Control by PCTG = " + cfgCtrlByPctg);
+    // Serial.println((String) "MAX DC = " + cfgCurrentDCMAX+ " MAX AC = " + cfgCurrentACMAX);
+    // Serial.println();
+    // // CAN.printReceivedIds();
+    // tAux = millis();
+    // Serial.println((String) "ID= " + idCmdCurrentPCTG);
+
+    // Print a header for each block of readings
+Serial.println("--- Sensor Readings ---");
+
+// Print Start Button status
+Serial.print("Start Button (stsStart):       ");
+Serial.println(stsStart); // Prints 1 (pressed) or 0 (not pressed)
+
+// Print SDC Analog value
+Serial.print("SDC Analog (stsSDCAnalog):   ");
+Serial.println(stsSDCAnalog); // Prints 0-4095
+
+// Print APPS1 value
+Serial.print("APPS 1 (apps1Data.valAnalog):  ");
+Serial.println(apps1Data.valAnalog); // Prints 0-4095
+
+// Print APPS2 value
+Serial.print("APPS 2 (apps2Data.valAnalog):  ");
+Serial.println(apps2Data.valAnalog); // Prints 0-4095
+
+// Print Brake 1 value
+Serial.print("Brake 1 (stsBrake):          ");
+Serial.println(stsBrake); // Prints 0-4095
+
+// Print Brake 2 value
+Serial.print("Brake 2 (stsBrake2):         ");
+Serial.println(stsBrake2); // Prints 0-4095
+
+// Print Raw Battery Voltage value
+Serial.print("V-Battery RAW (stsVbatRAW):  ");
+Serial.println(stsVbatRAW);
+
+// Add a separator for readability
+Serial.println("-------------------------");
+
+// Add a delay so the serial monitor is readable and not flooded
+tAux = millis();
   }
 }
 
