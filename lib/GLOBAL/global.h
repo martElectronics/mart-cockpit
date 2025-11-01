@@ -30,12 +30,12 @@ struct sensorData
 {
   // Configuración
   int pin;
-  int valAnalogUP, valAnalogDOWN;
-  int valScaledUP, valScaledDOWN;
-  int range;
+  uint16_t valAnalogUP, valAnalogDOWN;
+  uint16_t valScaledUP, valScaledDOWN;
+  uint16_t range;
 
   // Runtime
-  int valAnalog, valScaled, valAvg, valDifference;
+  uint16_t valAnalog, valScaled, valAvg, valDifference;
 };
 
 //INVERTER
@@ -147,9 +147,9 @@ void intToByteArray(int a, byte *byteArray)
   byteArray[0] = a & 0xFF;
 }
 // Function to combine two integers into an unsigned long int
-unsigned long int combineInts(uint32_t int1, uint32_t int2)
+uint32_t combineInts(uint32_t int1, uint32_t int2)
 {
-  return (static_cast<unsigned long int>(int1) << 5) + int2;
+  return (static_cast<uint32_t>(int1) << 5) + int2;
   // unsigned long finalID = (PID << 8) | NodeID;
   // return finalID;
 }
