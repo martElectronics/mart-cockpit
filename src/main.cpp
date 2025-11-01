@@ -12,7 +12,7 @@
 //**MCP3208 */
 #define SPI_CS 10       // SPI slave select
 #define ADC_VREF 3300   // 3.3V Vref
-#define ADC_CLK 1600000 // SPI clock 1.6MHz
+#define ADC_CLK 160000 // SPI clock 1.6MHz //estaba a 1600000
 
 CAN_BUS CAN(HardwareType::Transciever, 125, 1);
 MCP3208 adc(ADC_VREF, SPI_CS);
@@ -383,7 +383,7 @@ void debug()
   // Serial.println();
   // delay(500);
 
-  if ((millis() - tAux) >= 1000)
+  if ((millis() - tAux) >= 100)
   {
     // Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
     // Serial.println((String) "Current=" + cmdDataCurrent[0]);
