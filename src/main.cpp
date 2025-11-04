@@ -20,7 +20,7 @@ Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 // PINES
 
-int pinTSON = 21, pinStart = 15, pinBUZZ = 8, pinTSON_EXT = 9, pinSDC = 16;
+int pinTSON = 21, pinStart = 15, pinBUZZ = 8, pinTSON_EXT = 9, pinSDC = 16, pinR2D_Digital;
 
 //**GLOBAL CONTROL */
 bool cfgCtrlBySpeed = false;
@@ -145,6 +145,9 @@ void setup()
   pinMode(pinTSON_EXT, INPUT);
   pinMode(pinBUZZ, OUTPUT);
   pinMode(pinSDC, INPUT);
+  pinMode(pinR2D_Digital, OUTPUT);
+  digitalWrite(pinR2D_Digital, LOW); // Inicialmente apagado
+
 
   // INIT
   parseConfigIds(packetIDStoConfig);
@@ -233,6 +236,8 @@ void controlInverter()
 
   stsAPPS = 0; //*****COMENTAR
   stsR2D = R2D(true, stsStart, (stsBrake2 >= cfgBrakeTH));
+  digitalWrite(pinR2D_Digital, stsR2D ? HIGH : LOW);
+
 
 //****MOTOR CONTROL LOGIC
   if (stsR2D && stsAPPS == 0)
