@@ -10,8 +10,8 @@
 #define LED_COUNT 1
 
 //**MCP3208 */
-#define SPI_CS 10       // SPI slave select
-#define ADC_VREF 3300   // 3.3V Vref
+#define SPI_CS 10      // SPI slave select
+#define ADC_VREF 3300  // 3.3V Vref
 #define ADC_CLK 160000 // SPI clock 1.6MHz //estaba a 1600000
 
 CAN_BUS CAN(HardwareType::Transciever, 125, 1);
@@ -78,9 +78,9 @@ int cfgCurrent = 0,           // 1
     cfgCurrentRel,            // 5
     cfgCurrentRelBrake,       // 6
     cfgDO,                    // 7
-    cfgCurrentACMAX = 190,      // 8
+    cfgCurrentACMAX = 190,    // 8
     cfgCurrentACBrakeMAX = 0, // 9
-    cfgCurrentDCMAX = 60,      // 10
+    cfgCurrentDCMAX = 60,     // 10
     cfgCurrentDCBrakeMAX = 0, // 11
     cfgDriveEnable = 0;       // 12
 
@@ -101,7 +101,7 @@ void processSerialCommand(int *p_var, int *c_var, int *md_var, int *ma_var, bool
 
 // PRG
 bool stsTSON, stsStart, stsR2D, stsAPPS, stsSDC;
-int stsBrake,stsBrake2, stsPot, stsSDCAnalog, stsVbatRAW;
+int stsBrake, stsBrake2, stsPot, stsSDCAnalog, stsVbatRAW;
 int cfgBrakeTH = 550, cfgChannelAPPS1 = 0, cfgChannelAPPS2 = 1, cfgChannelBrake = 2, cfgChannelSteering = 3;
 int cfgAPPSdiff = 10, cfgAPPSdesc = 5000, cfgAPPSdescScaled = 200, cfgAPPSmax = 0, cfgTimeSoundR2D = 2000;
 float cfgAPPSMargin = 0.1; // (0.1=10%)
@@ -110,11 +110,11 @@ uint32_t tA = millis();
 
 // CAN DATA
 
-unsigned long int idBMSStatus=10;
-unsigned long int idBMSMaxValues=11;
-unsigned long int idAPPSState=1163;
-unsigned long int idBrakeState=1164;
-unsigned long int idVCUSignals=1166;
+unsigned long int idBMSStatus = 10;
+unsigned long int idBMSMaxValues = 11;
+unsigned long int idAPPSState = 1163;
+unsigned long int idBrakeState = 1164;
+unsigned long int idVCUSignals = 1166;
 
 byte canDataBMSStatus[8];
 
@@ -124,10 +124,10 @@ uint8_t CANVCUSignals[8];
 
 void configureAPPS()
 {
-  apps1Data.valAnalogUP = 2270;   // 2275
-  apps1Data.valAnalogDOWN = 2030; // 1850
-  apps2Data.valAnalogUP = 924;    // 790
-  apps2Data.valAnalogDOWN = 1920; // 1670
+  apps1Data.valAnalogUP = 1055;   // 2275
+  apps1Data.valAnalogDOWN = 1935; // 1850
+  apps2Data.valAnalogUP = 2290;   // 790
+  apps2Data.valAnalogDOWN = 2068; // 1670
   apps1Data.valScaledUP = apps2Data.valScaledUP = 0;
   apps1Data.valScaledDOWN = apps2Data.valScaledDOWN = 1000;
   apps1Data.range = abs(apps1Data.valAnalogUP - apps1Data.valAnalogDOWN);
@@ -196,24 +196,19 @@ void controlInverter()
   static int serialC = 0;
   static bool serialEnableContol = false;
 
-   //****LECTURA GPIO
-   stsStart = !digitalRead(pinStart);
+  //****LECTURA GPIO
+  stsStart = !digitalRead(pinStart);
   stsSDCAnalog = adc.read(MCP3208::Channel::SINGLE_1);
-   apps1Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_2);
-    apps2Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_3);
+  apps1Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_2);
+  apps2Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_3);
   stsBrake = adc.read(MCP3208::Channel::SINGLE_4);
   stsBrake2 = adc.read(MCP3208::Channel::SINGLE_5);
-    stsVbatRAW=adc.read(MCP3208::Channel::SINGLE_6);
-  
- 
+  stsVbatRAW = adc.read(MCP3208::Channel::SINGLE_6);
 
   //****LECTURA CAN
   CAN.receive();
-  CAN.getPacket(idBMSStatus,canDataBMSStatus,8);
+  CAN.getPacket(idBMSStatus, canDataBMSStatus, 8);
 
-
-
-  
   //****Procesamiento
 
   apps1Data.valScaled =
@@ -222,71 +217,50 @@ void controlInverter()
   apps2Data.valScaled =
       map(apps2Data.valAnalog, apps2Data.valAnalogUP, apps2Data.valAnalogDOWN, apps2Data.valScaledUP, apps2Data.valScaledDOWN);
 
+  // Constrain limits
+  if (apps1Data.valScaled > apps1Data.valScaledUP)
+    apps1Data.valScaled = apps1Data.valScaledUP;
+  if (apps1Data.valScaled < apps1Data.valScaledDOWN)
+    apps1Data.valScaled = apps1Data.valScaledDOWN;
+  if (apps2Data.valScaled > apps2Data.valScaledUP)
+    apps2Data.valScaled = apps2Data.valScaledUP;
+  if (apps2Data.valScaled < apps2Data.valScaledDOWN)
+    apps2Data.valScaled = apps2Data.valScaledDOWN;
+
   stsAPPS = apps(apps1Data.valScaled, apps2Data.valScaled, 100, 0, 100);
 
   // *R2D
-  // stsR2D = stsStart; //*****COMENTAR
-  // stsR2D = true; //REVISAR
+
   stsAPPS = 0; //*****COMENTAR
   stsR2D = R2D(true, stsStart, (stsBrake2 >= cfgBrakeTH));
 
-
-  // Target speed/rpm
-  if (!stsR2D || stsAPPS != 0)
+//****MOTOR CONTROL LOGIC
+  if (stsR2D && stsAPPS == 0)
   {
-    RPMtarget = 0;
-    currentTarget = 0;
-  }
-  else if (stsR2D && stsAPPS == 0)
-  {
-    RPMtarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, cfgRPMax * 10);
-
+    cfgDriveEnable = 1;
     if (!cfgCtrlBySerial)
     {
       currentTarget = apps2Data.valScaled;
-     // cfgCurrentACMAX = 180;
-      //cfgCurrentDCMAX = 15;
-      if (currentTarget < 100)
-        currentTarget = 0;
-      else if (currentTarget > 1000)
-        currentTarget = 1000;
+      // cfgCurrentACMAX = 180;
+      // cfgCurrentDCMAX = 15;
     }
-    else
-    {
-    }
-  }
-  // DRIVE ENABLE
-  if (!stsR2D)
-  {
-    cfgDriveEnable = 0;
-  }
-  else
-  {
-    cfgDriveEnable = 1;
-  }
 
-  cmdDataDriveEN[0] = (byte)cfgDriveEnable;
-  cmdDataRPM[0] = RPMtarget;
-  cmdDataCurrent[0] = currentTarget;
+    RPMtarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, cfgRPMax * 10);
 
-  cmdDataCurrentACMax[0] = cfgCurrentACMAX * 10;
-  cmdDataCurrentDCMax[0] = cfgCurrentDCMAX * 10;
-  // ******WRITE
-
-  CAN.setPacket(idCmdEN, cmdDataDriveEN, 1);
-  if (stsR2D)
-  {
+    cmdDataDriveEN[0] = (byte)cfgDriveEnable;
+    cmdDataRPM[0] = RPMtarget;
+    cmdDataCurrent[0] = currentTarget;
+    cmdDataCurrentACMax[0] = cfgCurrentACMAX * 10;
+    cmdDataCurrentDCMax[0] = cfgCurrentDCMAX * 10;
 
     if (cfgCtrlBySpeed)
     {
-
       // CAN.setPacket(idCmdRPM, cmdDataRPM, 2);
     }
     else
     {
       if (cfgCtrlByPctg)
       {
-
         CAN.setPacket(idCmdCurrentPCTG, cmdDataCurrent, 2);
         CAN.DataOUT.removePacket(idCmdCurrent);
       }
@@ -295,36 +269,38 @@ void controlInverter()
         CAN.setPacket(idCmdCurrent, cmdDataCurrent, 2);
         CAN.DataOUT.removePacket(idCmdCurrentPCTG);
       }
-     CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
+      CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
       CAN.setPacket(idCmdSetMaxDCCurrent, cmdDataCurrentDCMax, 4);
     }
   }
-
   else
   {
+    
     CAN.DataOUT.removePacket(idCmdEN);
     CAN.DataOUT.removePacket(idCmdCurrentPCTG);
     CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
+    CAN.DataOUT.removePacket(idCmdSetMaxDCCurrent);
   }
 
-  processSerialCommand(&currentTarget, &currentTarget,&cfgCurrentDCMAX, &cfgCurrentACMAX,&cfgCtrlByPctg, cfgCtrlBySerial);
+  // ******WRITE CAN DATA
 
+  CAN.setPacket(idCmdEN, cmdDataDriveEN, 1);
 
- CANAppsState[0]=apps1Data.valScaled;
- CANAppsState[1]=apps2Data.valScaled;
- CANAppsState[2]=apps1Data.valAnalog;
- CANAppsState[3]=apps2Data.valAnalog;
- CANBrakeState[0]=CANBrakeState[1]=77777;
- CANBrakeState[2]=stsBrake;
-CANBrakeState[3]=stsBrake2;
-CANVCUSignals[0]=stsVbatRAW;
+  processSerialCommand(&currentTarget, &currentTarget, &cfgCurrentDCMAX, &cfgCurrentACMAX, &cfgCtrlByPctg, cfgCtrlBySerial);
 
-CAN.setPacket(idAPPSState,CANAppsState,4);
-CAN.setPacket(idBrakeState,CANBrakeState,4);
-CAN.setPacket(idVCUSignals,CANVCUSignals,8);
+  CANAppsState[0] = apps1Data.valScaled;
+  CANAppsState[1] = apps2Data.valScaled;
+  CANAppsState[2] = apps1Data.valAnalog;
+  CANAppsState[3] = apps2Data.valAnalog;
+  CANBrakeState[0] = CANBrakeState[1] = 77777;
+  CANBrakeState[2] = stsBrake;
+  CANBrakeState[3] = stsBrake2;
+  CANVCUSignals[0] = stsVbatRAW;
 
+  CAN.setPacket(idAPPSState, CANAppsState, 4);
+  CAN.setPacket(idBrakeState, CANBrakeState, 4);
+  CAN.setPacket(idVCUSignals, CANVCUSignals, 8);
 
-  
   CAN.send();
 }
 
@@ -401,41 +377,41 @@ void debug()
     // Serial.println((String) "ID= " + idCmdCurrentPCTG);
 
     // Print a header for each block of readings
-Serial.println("--- Sensor Readings ---");
+    Serial.println("--- Sensor Readings ---");
 
-// Print Start Button status
-Serial.print("Start Button (stsStart):       ");
-Serial.println(stsStart); // Prints 1 (pressed) or 0 (not pressed)
+    // Print Start Button status
+    Serial.print("Start Button (stsStart):       ");
+    Serial.println(stsStart); // Prints 1 (pressed) or 0 (not pressed)
 
-// Print SDC Analog value
-Serial.print("SDC Analog (stsSDCAnalog):   ");
-Serial.println(stsSDCAnalog); // Prints 0-4095
+    // Print SDC Analog value
+    Serial.print("SDC Analog (stsSDCAnalog):   ");
+    Serial.println(stsSDCAnalog); // Prints 0-4095
 
-// Print APPS1 value
-Serial.print("APPS 1 (apps1Data.valAnalog):  ");
-Serial.println(apps1Data.valAnalog); // Prints 0-4095
+    // Print APPS1 value
+    Serial.print("APPS 1 (apps1Data.valAnalog):  ");
+    Serial.println(apps1Data.valAnalog); // Prints 0-4095
 
-// Print APPS2 value
-Serial.print("APPS 2 (apps2Data.valAnalog):  ");
-Serial.println(apps2Data.valAnalog); // Prints 0-4095
+    // Print APPS2 value
+    Serial.print("APPS 2 (apps2Data.valAnalog):  ");
+    Serial.println(apps2Data.valAnalog); // Prints 0-4095
 
-// Print Brake 1 value
-Serial.print("Brake 1 (stsBrake):          ");
-Serial.println(stsBrake); // Prints 0-4095
+    // Print Brake 1 value
+    Serial.print("Brake 1 (stsBrake):          ");
+    Serial.println(stsBrake); // Prints 0-4095
 
-// Print Brake 2 value
-Serial.print("Brake 2 (stsBrake2):         ");
-Serial.println(stsBrake2); // Prints 0-4095
+    // Print Brake 2 value
+    Serial.print("Brake 2 (stsBrake2):         ");
+    Serial.println(stsBrake2); // Prints 0-4095
 
-// Print Raw Battery Voltage value
-Serial.print("V-Battery RAW (stsVbatRAW):  ");
-Serial.println(stsVbatRAW);
+    // Print Raw Battery Voltage value
+    Serial.print("V-Battery RAW (stsVbatRAW):  ");
+    Serial.println(stsVbatRAW);
 
-// Add a separator for readability
-Serial.println("-------------------------");
+    // Add a separator for readability
+    Serial.println("-------------------------");
 
-// Add a delay so the serial monitor is readable and not flooded
-tAux = millis();
+    // Add a delay so the serial monitor is readable and not flooded
+    tAux = millis();
   }
 }
 
