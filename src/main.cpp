@@ -117,14 +117,15 @@ unsigned long int idBrakeState = 1164;
 unsigned long int idVCUSignals = 1166;
 
 byte canDataBMSStatus[8];
-
 uint16_t CANAppsState[4];
 uint16_t CANBrakeState[4];
 uint8_t CANVCUSignals[8];
 
+const int canSendingPeriod=100;
+
 void configureAPPS()
 {
-  apps1Data.valAnalogUP = 1055;   // 2275
+  apps1Data.valAnalogUP = 1055;   // 2275  
   apps1Data.valAnalogDOWN = 1935; // 1850
   apps2Data.valAnalogUP = 2290;   // 790
   apps2Data.valAnalogDOWN = 2068; // 1670
@@ -175,6 +176,13 @@ void setup()
   SPI.beginTransaction(settings);
 
   pixels.clear(); // Set all pixel colors to 'off'
+
+  //***CAN 
+  CAN.setPacketTimer(idCmdEN,canSendingPeriod);
+   CAN.setPacketTimer(idCmdCurrentPCTG,canSendingPeriod);
+    CAN.setPacketTimer(idCmdCurrent,canSendingPeriod);
+    CAN.setPacketTimer(idCmdSetMaxACCurrent,canSendingPeriod);
+     CAN.setPacketTimer(idCmdSetMaxDCCurrent,canSendingPeriod);
 
   // CAN.setPacketTimer(idCmdEN,50);
 }
@@ -231,8 +239,7 @@ void controlInverter()
 
   // *R2D
 
-  stsAPPS = 0; //*****COMENTAR
-  stsR2D = R2D(true, stsStart, (stsBrake2 >= cfgBrakeTH));
+  stsR2D = R2D(stsSDCAnalog>3000, stsStart, (stsBrake2 >= cfgBrakeTH));
 
 //****MOTOR CONTROL LOGIC
   if (stsR2D && stsAPPS == 0)
@@ -257,13 +264,17 @@ void controlInverter()
     {
       // CAN.setPacket(idCmdRPM, cmdDataRPM, 2);
     }
+
+    //Control por corriente
     else
     {
+      //Control en función de la corriente máxima establecida
       if (cfgCtrlByPctg)
       {
         CAN.setPacket(idCmdCurrentPCTG, cmdDataCurrent, 2);
         CAN.DataOUT.removePacket(idCmdCurrent);
       }
+      //Control corriente absoluto
       else
       {
         CAN.setPacket(idCmdCurrent, cmdDataCurrent, 2);
@@ -272,27 +283,29 @@ void controlInverter()
       CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
       CAN.setPacket(idCmdSetMaxDCCurrent, cmdDataCurrentDCMax, 4);
     }
+    CAN.setPacket(idCmdEN, cmdDataDriveEN, 1);
   }
   else
   {
     
     CAN.DataOUT.removePacket(idCmdEN);
     CAN.DataOUT.removePacket(idCmdCurrentPCTG);
+    CAN.DataOUT.removePacket(idCmdCurrent);
     CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
     CAN.DataOUT.removePacket(idCmdSetMaxDCCurrent);
   }
 
   // ******WRITE CAN DATA
 
-  CAN.setPacket(idCmdEN, cmdDataDriveEN, 1);
+  
 
-  processSerialCommand(&currentTarget, &currentTarget, &cfgCurrentDCMAX, &cfgCurrentACMAX, &cfgCtrlByPctg, cfgCtrlBySerial);
+  //processSerialCommand(&currentTarget, &currentTarget, &cfgCurrentDCMAX, &cfgCurrentACMAX, &cfgCtrlByPctg, cfgCtrlBySerial);
 
   CANAppsState[0] = apps1Data.valScaled;
   CANAppsState[1] = apps2Data.valScaled;
   CANAppsState[2] = apps1Data.valAnalog;
   CANAppsState[3] = apps2Data.valAnalog;
-  CANBrakeState[0] = CANBrakeState[1] = 77777;
+  CANBrakeState[0] = CANBrakeState[1] = 777;
   CANBrakeState[2] = stsBrake;
   CANBrakeState[3] = stsBrake2;
   CANVCUSignals[0] = stsVbatRAW;
@@ -463,23 +476,15 @@ int apps(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc)
 {
   static unsigned long int t = millis();
   int val = abs(valAPPS1 - valAPPS2);
+  bool apps1ok= (apps1Data.valAnalog > 700) && (apps1Data.valAnalog < 2300);
+  bool apps2ok= (apps1Data.valAnalog > 1700) && (apps1Data.valAnalog < 2700);
 
-  if ((valAPPS1 <= valDesc) || (valAPPS2 <= valDesc))
-  {
-    return -1;
-  }
-  else if (val >= difMAX)
-  {
-    return 1;
-  }
-  else
+  if(apps1ok && apps2ok)
   {
     return 0;
   }
-
-  if ((millis() - t) >= 1000)
-  {
-    Serial.println("APPS DIF= " + val);
+  else{
+    return -1;
   }
 }
 
