@@ -20,7 +20,7 @@ Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 // PINES
 
-int pinTSON = 21, pinStart = 15, pinBUZZ = 8, pinTSON_EXT = 9, pinSDC = 16;
+int pinTSON = 21, pinStart = 15, pinBUZZ = 8, pinTSON_EXT = 9, pinSDC = 16, pinR2D_Digital=2;
 
 //**GLOBAL CONTROL */
 bool cfgCtrlBySpeed = false;
@@ -88,7 +88,7 @@ int timeUpdateConfig = 5000, timeUpdateCTRL = 0;
 
 void configInverterLimits();                                            // Sets CAN packet timers for configuring the inverter's limits
 int getFilteredAnalogRead(int, int sampleSize);                         // Does sliding window average on a given input
-bool R2D(bool tson, bool start, bool brake);                            // Returns de R2D state
+bool R2D(bool tson, bool start, bool brake, bool appsOk);                          // Returns de R2D state
 int apps(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc); // Returns the APPS implausability state
 void debug();                                                           // Shows debug info
 void debugShowADC();                                                    // Shows debug ADC info
@@ -146,6 +146,7 @@ void setup()
   pinMode(pinTSON_EXT, INPUT);
   pinMode(pinBUZZ, OUTPUT);
   pinMode(pinSDC, INPUT);
+  pinMode(pinR2D_Digital,OUTPUT); //Pin de control digital DriveEnbale inversor
 
   // INIT
   parseConfigIds(packetIDStoConfig);
@@ -214,7 +215,7 @@ void controlInverter()
 
 
   //APPS simple filtering
-  uint16_t apps1sum, apps2sum;
+  uint32_t apps1sum, apps2sum;
   apps1sum=apps2sum=0;
   const int numSamples=50;
 
@@ -255,7 +256,7 @@ void controlInverter()
 
   // *R2D
 
-  stsR2D = R2D(stsSDCAnalog>3000, stsStart, (stsBrake2 >= cfgBrakeTH));
+  stsR2D = R2D(stsSDCAnalog>2000, stsStart, (stsBrake2 >= cfgBrakeTH),(stsAPPS==0));
 
 //****MOTOR CONTROL LOGIC
   if (stsR2D && stsAPPS == 0)
@@ -303,13 +304,14 @@ void controlInverter()
   }
   else
   {
-    
+    cfgDriveEnable=0;
     CAN.DataOUT.removePacket(idCmdEN);
     CAN.DataOUT.removePacket(idCmdCurrentPCTG);
     CAN.DataOUT.removePacket(idCmdCurrent);
     CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
     CAN.DataOUT.removePacket(idCmdSetMaxDCCurrent);
   }
+  digitalWrite(pinR2D_Digital, cfgDriveEnable);
 
   // ******WRITE CAN DATA
 
@@ -388,7 +390,7 @@ void debug()
   // Serial.println();
   // delay(500);
 
-  if ((millis() - tAux) >= 100)
+  if ((millis() - tAux) >= 1000)
   {
     // Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
     // Serial.println((String) "Current=" + cmdDataCurrent[0]);
@@ -436,6 +438,10 @@ void debug()
     Serial.print("V-Battery RAW (stsVbatRAW):  ");
     Serial.println(stsVbatRAW);
 
+
+
+    //stsR2D = R2D(stsSDCAnalog>2000, stsStart, (stsBrake2 >= cfgBrakeTH),(stsAPPS==0));
+     Serial.println((String)"SDC= " + (stsSDCAnalog>2000) +" Start= " + (stsStart)+" Brake= " + (stsBrake2 >= cfgBrakeTH)+ " APPS= " + (stsAPPS==0));
     // Add a separator for readability
     Serial.println("-------------------------");
 
@@ -444,7 +450,7 @@ void debug()
   }
 }
 
-bool R2D(bool tson, bool start, bool brake)
+bool R2D(bool tson, bool start, bool brake, bool appsOk)
 {
   static int step = 0;
   static uint32_t tAux = millis();
@@ -457,17 +463,17 @@ bool R2D(bool tson, bool start, bool brake)
   switch (step)
   {
   case 0:
-    if (tson)
+    if (tson && appsOk)
     {
       step += 10;
     }
     break;
   case 10:
-    if (!tson)
+    if (!(tson && appsOk))
     {
       step = 0;
     }
-    else if (start && brake)
+    else if (start && brake && appsOk)
     {
       tAux = millis();
       digitalWrite(pinBUZZ, true);
@@ -475,7 +481,7 @@ bool R2D(bool tson, bool start, bool brake)
     }
     break;
   case 20:
-    if (!tson)
+    if (!(tson && appsOk))
     {
       step = 0;
     }
@@ -493,8 +499,10 @@ int apps(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc)
   static unsigned long int t = millis();
   int val = abs(valAPPS1 - valAPPS2);
   bool apps1ok= (apps1Data.valAnalog > 700) && (apps1Data.valAnalog < 2300);
-  bool apps2ok= (apps1Data.valAnalog > 1700) && (apps1Data.valAnalog < 2700);
+  bool apps2ok= (apps2Data.valAnalog > 1700) && (apps2Data.valAnalog < 2700);
 
+  // Serial.println((String)"apps1 ok: "+apps1ok);
+  // Serial.println((String)"apps2 ok: "+apps2ok);
   if(apps1ok && apps2ok)
   {
     return 0;
