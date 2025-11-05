@@ -207,11 +207,27 @@ void controlInverter()
   //****LECTURA GPIO
   stsStart = !digitalRead(pinStart);
   stsSDCAnalog = adc.read(MCP3208::Channel::SINGLE_1);
-  apps1Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_2);
-  apps2Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_3);
+  
   stsBrake = adc.read(MCP3208::Channel::SINGLE_4);
   stsBrake2 = adc.read(MCP3208::Channel::SINGLE_5);
   stsVbatRAW = adc.read(MCP3208::Channel::SINGLE_6);
+
+
+  //APPS simple filtering
+  uint16_t apps1sum, apps2sum;
+  apps1sum=apps2sum=0;
+  const int numSamples=50;
+
+  for(int i=0;i<numSamples;i++)
+  {
+    apps1Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_2);
+   apps2Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_3);
+   apps1sum+=apps1Data.valAnalog;
+   apps2sum+=apps2Data.valAnalog;
+    delayMicroseconds(100);
+  }
+  apps1Data.valAnalog=apps1sum/numSamples;
+  apps2Data.valAnalog=apps2sum/numSamples;
 
   //****LECTURA CAN
   CAN.receive();
