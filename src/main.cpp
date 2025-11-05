@@ -20,7 +20,7 @@ Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 // PINES
 
-int pinTSON = 21, pinStart = 15, pinBUZZ = 8, pinTSON_EXT = 9, pinSDC = 16, pinR2D_Digital;
+int pinTSON = 21, pinStart = 15, pinBUZZ = 8, pinTSON_EXT = 9, pinSDC = 16, pinR2D_Digital = 2;
 
 //**GLOBAL CONTROL */
 bool cfgCtrlBySpeed = false;
