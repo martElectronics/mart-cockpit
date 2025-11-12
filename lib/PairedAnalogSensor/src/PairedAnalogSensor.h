@@ -16,8 +16,42 @@ struct PairedAnalogSensorConfig {
     AnalogSensorConfig cfgSensor1; // Configuración para el primer sensor
     AnalogSensorConfig cfgSensor2; // Configuración para el segundo sensor
 
-    // Porcentaje máximo de desviación permitido entre las salidas escaladas de los dos sensores
-    // Por ejemplo, 10.0 para una diferencia máxima del 10%
+    // Configuracion por defecto
+    // --- Configuración del SENSOR 1 (APPS1) ---
+
+    cfgSensor1.cfgSensorVoltage = 4.5;
+    cfgSensor1.cfgAdcResolution = 4095;
+    cfgSensor1.cfgScaledOutputMin = 0; 
+    cfgSensor1.cfgScaledOutputMax = 100; 
+    cfgSensor1.cfgAdcMinNormal = 1035;    
+    cfgSensor1.cfgAdcMaxNormal = 1985;
+    cfgSensor1.cfgLowerMarginPercent = 10.0; 
+    cfgSensor1.cfgUpperMarginPercent = 5.0; 
+    cfgSensor1.cfgAdcShortGND = 10;
+    cfgSensor1.cfgAdcShortVCC = 4085;
+    cfgSensor1.cfgImplausibilityTimeout = 100;
+    cfgSensor1.cfgFilterType = FilterType::EWMA;
+    cfgSensor1.cfgFilterSize = 10;
+    cfgSensor1.cfgFilterAlpha = 0.6;              // Factor de suavizado para EWMA (0 < alpha < 1)
+
+    // --- Configuración del SENSOR 2 (APPS2) ---
+  
+    cfgSensor2.cfgSensorVoltage = 1.54;            // Voltaje de operación del sensor (e.g., 3.3, 5.0)
+    cfgSensor2.cfgAdcResolution = 4095;        // Resolución del ADC (e.g., 4095 para 12-bit)
+    cfgSensor2.cfgScaledOutputMin = 0;         // Valor mínimo de la salida escalada
+    cfgSensor2.cfgScaledOutputMax = 100;       // Valor máximo de la salida escalada
+    cfgSensor2.cfgAdcMinNormal = 2290;        // Valor del ADC con el sensor en reposo
+    cfgSensor2.cfgAdcMaxNormal = 2055;        // Valor del ADC con el sensor actuado al máximo
+    cfgSensor2.cfgLowerMarginPercent = 10.0;       // Porcentaje inferior donde la salida es cfgScaledOutputMin
+    cfgSensor2.cfgUpperMarginPercent = 5.0;       // Porcentaje superior donde la salida es cfgScaledOutputMax
+    cfgSensor2.cfgAdcShortGND = 10;            // Umbral para cortocircuito a GND
+    cfgSensor2.cfgAdcShortVCC = 4085;          // Umbral para cortocircuito a VCC
+    cfgSensor2.cfgImplausibilityTimeout = 100;
+    cfgSensor2.cfgFilterType = FilterType::EWMA;
+    cfgSensor2.cfgFilterSize = 10;              // Tamaño para Block Avg o Sliding Window
+    cfgSensor2.cfgFilterAlpha = 0.6;              // Factor de suavizado para EWMA (0 < alpha < 1)
+
+    // --- Configuración de la Coherencia del PAR ---
     float cfgMaxDeviationPercent = 10.0;
 };
 
@@ -28,10 +62,22 @@ public:
     ~PairedAnalogSensor(); // Destructor para liberar memoria
 
     // Método principal para actualizar con las lecturas de ambos sensores
-    void update(uint16_t rawValue1, uint16_t rawValue2);
+    void update(uint16_t rawValue1, uint16_t rawValue2, 
+        float& meanFilteredValue, float& meanScaledValue, 
+        float& sensitiveFilteredValue, float& sensitiveScaledValue, 
+        SensorState& state);
 
-    // Getters para el estado del par
-    float getAverageValue() const;
+    // Getters para valores medios
+    float getMeanAverageValue() const;
+    float getMeanScaledValue() const;
+    float getMeanFilteredValue() const;
+
+    // Getters para valores del sensible
+    float getSensitiveAverageValue() const;
+    float getSensitiveScaledValue() const;
+    float getSensitiveFilteredValue() const;
+
+    // Estados generales del pair
     SensorState getSensorState() const;
     PairedImplausibilityType getImplausibilityType() const;
 
@@ -41,11 +87,14 @@ public:
 
 private:
     // Atributos privados
-    PairedAnalogSensorConfig mConfig;
+    const PairedAnalogSensorConfig& mConfig;
     AnalogSensor* mSensor1;
     AnalogSensor* mSensor2;
+    AnalogSensor* sensitive; // Para poder obtener los valores más sensibles sin tener que almacenarlos dos veces, los obtienes llamando a los metodos
 
-    float mAverageValue;
+    float mFilteredValue;
+    float mScaledValue;
+
     SensorState mState;
     PairedImplausibilityType mImplausibilityType;
     
