@@ -18,21 +18,44 @@ PairedAnalogSensor::~PairedAnalogSensor() {
     delete mSensor2;
 }
 
-void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2) {
+void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2
+        float& meanFilteredValue, float& meanScaledValue, 
+        float& sensitiveFilteredValue, float& sensitiveScaledValue, 
+        SensorState& state) {
+
+    // Habría que ver cual es el más sensible para referenciarlo en AnalogSensor* sensitive;
+    // mas sensible el que tenga menor diferencia entre cfgAdcMaxNormal y cfgAdcMinNormal
+
+    // Valores sensor 1
+    float filteredValue1;
+    float scaledValue1;
+    SensorState state1;
+    // Valores sensor 2
+    float filteredValue2;
+    float scaledValue2;
+    SensorState state2;
+
+    // Obtener cual es el sensor más sensible
+    
     // 1. Actualizar cada sensor individualmente
-    mSensor1->update(rawValue1);
-    mSensor2->update(rawValue2);
+    mSensor1->update(rawValue1, filteredValue1, scaledValue1, state1);
+    mSensor2->update(rawValue2, filteredValue2, scaledValue2, state2);
 
     // 2. Comprobar la plausibilidad entre ambos
     mCheckPlausibility();
 
     // 3. Calcular el valor medio solo si el estado es normal
     if (mState == SensorState::NORMAL) {
-        mAverageValue = (mSensor1->getScaledValue() + mSensor2->getScaledValue()) / 2.0f;
+        mScaledValue = (filteredValue1 + filteredValue2) / 2.0f;
+        mFilteredValue = (scaledValue1 + scaledValue2) / 2.0f;
+
     } else {
         // En caso de fallo, el valor de salida debe ser seguro (ej. 0 para el acelerador)
-        mAverageValue = 0.0f;
+        mScaledValue = 0.0f;
+        mFilteredValue = 0.0f;
     }
+
+    // Queda obtener los datos del más sensible
 }
 
 void PairedAnalogSensor::mCheckPlausibility() {
