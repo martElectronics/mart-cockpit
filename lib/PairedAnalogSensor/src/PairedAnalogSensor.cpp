@@ -20,10 +20,20 @@ PairedAnalogSensor::~PairedAnalogSensor() {
 
 void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2) {
     // 1. Actualizar cada sensor individualmente
-    mSensor1->update(rawValue1);
-    mSensor2->update(rawValue2);
+    // Se crean variables locales para cumplir con la nueva firma de AnalogSensor::update.
+    // Aunque no usemos estas variables locales directamente aquí, la llamada actualiza
+    // el estado interno de mSensor1 y mSensor2, que es lo que necesitamos.
+    float filtered1, scaled1;
+    SensorState state1;
+    mSensor1->update(rawValue1, filtered1, scaled1, state1);
+
+    float filtered2, scaled2;
+    SensorState state2;
+    mSensor2->update(rawValue2, filtered2, scaled2, state2);
 
     // 2. Comprobar la plausibilidad entre ambos
+    // Esta función ya usa los getters, por lo que funcionará correctamente
+    // con el estado interno actualizado de los sensores.
     mCheckPlausibility();
 
     // 3. Calcular el valor medio solo si el estado es normal
