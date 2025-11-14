@@ -42,6 +42,8 @@ void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2
     mSensor2->update(rawValue2, filteredValue2, scaledValue2, state2);
 
     // 2. Comprobar la plausibilidad entre ambos
+    // Esta función ya usa los getters, por lo que funcionará correctamente
+    // con el estado interno actualizado de los sensores.
     mCheckPlausibility();
 
     // 3. Calcular el valor medio solo si el estado es normal
