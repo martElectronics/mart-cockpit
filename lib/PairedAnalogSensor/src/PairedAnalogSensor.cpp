@@ -10,6 +10,15 @@ PairedAnalogSensor::PairedAnalogSensor(const PairedAnalogSensorConfig& config)
     // Creación dinámica de los sensores internos
     mSensor1 = new AnalogSensor(mConfig.cfgSensor1);
     mSensor2 = new AnalogSensor(mConfig.cfgSensor2);
+
+    // Obtener el sensor más sensible
+    float sensitiSensor1 = mConfig.cfgSensor1.cfgAdcMaxNormal - mConfig.cfgSensor1.cfgAdcMinNormal;
+    float sensitiSensor2 = mConfig.cfgSensor2.cfgAdcMaxNormal - mConfig.cfgSensor2.cfgAdcMinNormal;
+    if (sensitiSensor1 >= sensitiSensor2) {
+        mSensitive = mSensor1;
+    } else {
+        mSensitive = mSensor2;
+    }
 }
 
 PairedAnalogSensor::~PairedAnalogSensor() {
@@ -23,9 +32,6 @@ void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2
         float& sensitiveFilteredValue, float& sensitiveScaledValue, 
         SensorState& state) {
 
-    // Habría que ver cual es el más sensible para referenciarlo en AnalogSensor* sensitive;
-    // mas sensible el que tenga menor diferencia entre cfgAdcMaxNormal y cfgAdcMinNormal
-
     // Valores sensor 1
     float filteredValue1;
     float scaledValue1;
@@ -34,8 +40,6 @@ void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2
     float filteredValue2;
     float scaledValue2;
     SensorState state2;
-
-    // Obtener cual es el sensor más sensible
     
     // 1. Actualizar cada sensor individualmente
     mSensor1->update(rawValue1, filteredValue1, scaledValue1, state1);
@@ -50,18 +54,29 @@ void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2
     if (mState == SensorState::NORMAL) {
         mScaledValue = (filteredValue1 + filteredValue2) / 2.0f;
         mFilteredValue = (scaledValue1 + scaledValue2) / 2.0f;
-
     } else {
         // En caso de fallo, el valor de salida debe ser seguro (ej. 0 para el acelerador)
         mScaledValue = 0.0f;
         mFilteredValue = 0.0f;
     }
 
-    // Queda obtener los datos del más sensible
+    // Valores a devolver
+
+    meanScaledValue = getMeanScaledValue();
+    meanFilteredValue = getMeanFilteredValue();
+    sensitiveFilteredValue = getSensitiveScaledValue();
+    sensitiveScaledValue = getSensitiveFilteredValue();
+
 }
 
 void PairedAnalogSensor::mCheckPlausibility() {
     // Primero, comprobar si alguno de los sensores ha fallado individualmente
+    if (mSensor1->getSensorState() == SensorState::IMPLAUSIBILITY
+        && mSensor2->getSensorState() == SensorState::IMPLAUSIBILITY) {
+        mState = SensorState::IMPLAUSIBILITY;
+        mImplausibilityType = PairedImplausibilityType::SENSOR1y2_FAULT;
+        return;
+    }
     if (mSensor1->getSensorState() == SensorState::IMPLAUSIBILITY) {
         mState = SensorState::IMPLAUSIBILITY;
         mImplausibilityType = PairedImplausibilityType::SENSOR1_FAULT;
@@ -99,8 +114,18 @@ void PairedAnalogSensor::mCheckPlausibility() {
 }
 
 // Getters
-float PairedAnalogSensor::getAverageValue() const { return mAverageValue; }
+float PairedAnalogSensor::getMeanScaledValue() const { return mScaledValue; }
+
+float PairedAnalogSensor::getMeanFilteredValue() const { return mFilteredValue; }
+
+float PairedAnalogSensor::getSensitiveScaledValue() const { return sensitive->getScaledValue(); }
+
+float PairedAnalogSensor::getSensitiveFilteredValue() const { return sensitive->getFilteredValue();  }
+
 SensorState PairedAnalogSensor::getSensorState() const { return mState; }
+
 PairedImplausibilityType PairedAnalogSensor::getImplausibilityType() const { return mImplausibilityType; }
+
 const AnalogSensor& PairedAnalogSensor::getSensor1() const { return *mSensor1; }
+
 const AnalogSensor& PairedAnalogSensor::getSensor2() const { return *mSensor2; }

@@ -8,6 +8,7 @@ enum class PairedImplausibilityType {
     NONE,
     SENSOR1_FAULT,        // Fallo individual del sensor 1 (corto, fuera de rango)
     SENSOR2_FAULT,        // Fallo individual del sensor 2
+    SENSOR1y2_FAULT,      // Fallo individual de ambos sensores
     DEVIATION_FAULT       // Los sensores difieren más de lo permitido
 };
 
@@ -68,12 +69,10 @@ public:
         SensorState& state);
 
     // Getters para valores medios
-    float getMeanAverageValue() const;
     float getMeanScaledValue() const;
     float getMeanFilteredValue() const;
 
     // Getters para valores del sensible
-    float getSensitiveAverageValue() const;
     float getSensitiveScaledValue() const;
     float getSensitiveFilteredValue() const;
 
@@ -90,7 +89,7 @@ private:
     const PairedAnalogSensorConfig& mConfig;
     AnalogSensor* mSensor1;
     AnalogSensor* mSensor2;
-    AnalogSensor* sensitive; // Para poder obtener los valores más sensibles sin tener que almacenarlos dos veces, los obtienes llamando a los metodos
+    AnalogSensor* mSensitive; // Para poder obtener los valores más sensibles sin tener que almacenarlos dos veces, los obtienes llamando a los metodos
 
     float mFilteredValue;
     float mScaledValue;
