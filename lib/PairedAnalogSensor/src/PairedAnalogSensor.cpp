@@ -3,7 +3,8 @@
 
 PairedAnalogSensor::PairedAnalogSensor(const PairedAnalogSensorConfig& config)
     : mConfig(config),
-      mAverageValue(0.0),
+      mFilteredValue(0.0),
+      mScaledValue(0.0),
       mState(SensorState::NORMAL),
       mImplausibilityType(PairedImplausibilityType::NONE)
 {
@@ -27,7 +28,7 @@ PairedAnalogSensor::~PairedAnalogSensor() {
     delete mSensor2;
 }
 
-void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2
+void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2,
         float& meanFilteredValue, float& meanScaledValue, 
         float& sensitiveFilteredValue, float& sensitiveScaledValue, 
         SensorState& state) {
@@ -66,7 +67,7 @@ void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2
     meanFilteredValue = getMeanFilteredValue();
     sensitiveFilteredValue = getSensitiveScaledValue();
     sensitiveScaledValue = getSensitiveFilteredValue();
-
+    state = getSensorState();
 }
 
 void PairedAnalogSensor::mCheckPlausibility() {
@@ -118,9 +119,9 @@ float PairedAnalogSensor::getMeanScaledValue() const { return mScaledValue; }
 
 float PairedAnalogSensor::getMeanFilteredValue() const { return mFilteredValue; }
 
-float PairedAnalogSensor::getSensitiveScaledValue() const { return sensitive->getScaledValue(); }
+float PairedAnalogSensor::getSensitiveScaledValue() const { return mSensitive->getScaledValue(); }
 
-float PairedAnalogSensor::getSensitiveFilteredValue() const { return sensitive->getFilteredValue();  }
+float PairedAnalogSensor::getSensitiveFilteredValue() const { return mSensitive->getFilteredValue();  }
 
 SensorState PairedAnalogSensor::getSensorState() const { return mState; }
 
