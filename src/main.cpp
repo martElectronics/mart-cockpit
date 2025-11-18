@@ -301,6 +301,8 @@ void controlInverter()
   CANBrakeState[2] = stsBrake;
   CANBrakeState[3] = stsBrake2;
   CANVCUSignals[0] = stsVbatRAW;
+  CANVCUSignals[2] = stsStart;
+
 
   CAN.setPacket(idAPPSState, CANAppsState, 4);
   CAN.setPacket(idBrakeState, CANBrakeState, 4);
