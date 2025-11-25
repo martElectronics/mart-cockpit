@@ -58,11 +58,11 @@ void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2,
 
     // 3. Calcular el valor medio y gestionar estado de error
     if (mState == SensorState::NORMAL) {
-        // Cálculo correcto: promedio de escalados a escalado, promedio de filtrados a filtrado
+        // Cálculo del promedio para la salida redundante
         mScaledValue = (valScaled1 + valScaled2) / 2.0f;
         mFilteredValue = (valFiltered1 + valFiltered2) / 2.0f;
     } else {
-        // En caso de fallo, el valor de salida se fuerza a seguro (0.0)
+        // SEGURIDAD: En caso de fallo, el valor de salida se fuerza a seguro (0.0)
         mScaledValue = 0.0f;
         mFilteredValue = 0.0f;
     }
@@ -81,7 +81,7 @@ void PairedAnalogSensor::mCheckPlausibility() {
     SensorState s1State = mSensor1->getSensorState();
     SensorState s2State = mSensor2->getSensorState();
 
-    // 1. Comprobar fallos eléctricos/individuales
+    // 1. Comprobar fallos eléctricos/individuales (fuera de rango eléctrico)
     bool s1Fault = (s1State == SensorState::IMPLAUSIBILITY);
     bool s2Fault = (s2State == SensorState::IMPLAUSIBILITY);
 
@@ -101,16 +101,16 @@ void PairedAnalogSensor::mCheckPlausibility() {
         return;
     }
 
-    // 2. Si ambos sensores están eléctricamente bien, comprobar la desviación
+    // 2. Si ambos sensores están eléctricamente bien, comprobar la desviación lógica
     float scaledVal1 = mSensor1->getScaledValue();
     float scaledVal2 = mSensor2->getScaledValue();
     
     // Usamos el rango de salida del primer sensor como referencia (Full Scale)
     float outputRange = mConfig.cfgSensor1.cfgScaledOutputMax - mConfig.cfgSensor1.cfgScaledOutputMin;
     
-    // Evitar división por cero si la configuración es errónea
+    // Protección contra división por cero
     if (std::abs(outputRange) < 1e-5f) { 
-        mState = SensorState::NORMAL; // O IMPLAUSIBILITY si se considera config error
+        mState = SensorState::NORMAL; // O tratar como error de configuración
         mImplausibilityType = PairedImplausibilityType::NONE;
         return;
     }
@@ -122,7 +122,7 @@ void PairedAnalogSensor::mCheckPlausibility() {
         mState = SensorState::IMPLAUSIBILITY;
         mImplausibilityType = PairedImplausibilityType::DEVIATION_FAULT;
     } else {
-        // Todo correcto
+        // Todo correcto: ambos sensores OK y coherentes entre sí
         mState = SensorState::NORMAL;
         mImplausibilityType = PairedImplausibilityType::NONE;
     }
@@ -139,7 +139,6 @@ float PairedAnalogSensor::getMeanFilteredValue() const {
 }
 
 float PairedAnalogSensor::getSensitiveScaledValue() const { 
-    // Si mSensitive no está inicializado (no debería pasar), devolver 0 o manejar error
     if (mSensitive) return mSensitive->getScaledValue();
     return 0.0f;
 }
