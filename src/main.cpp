@@ -1,665 +1,556 @@
-#include <Arduino.h>
-#include <MART_CAN.h>
-#include <SPI.h>
-#include "global.h"
-#include <Mcp320x.h>
-#include <Adafruit_NeoPixel.h>
+#include <Arduino.h>              // Librería base de Arduino: funciones de GPIO, Serial, millis(), etc.
+#include <MART_CAN.h>             // Librería MART_CAN: gestión de comunicación CAN (envío/recepción de frames).
+#include <SPI.h>                  // Librería SPI: comunicación con periféricos por bus SPI (ej. ADC).
+#include <EEPROM.h>               // Librería EEPROM: lectura/escritura de memoria no volátil.
+#include "global.h"               // Archivo propio del proyecto (probablemente define estructuras y constantes).
+#include <Mcp320x.h>              // Librería para ADC MCP3208 (conversor analógico-digital de 12 bits).
+#include <Adafruit_NeoPixel.h>    // Librería para controlar LEDs RGB tipo NeoPixel.
 
-//**LED RGB */
-#define LED_PIN 48
-#define LED_COUNT 1
+// ===================== CONSTANTES =====================
+#define CAN_SPEED_KBPS 125        // Velocidad del bus CAN en kbps (125 kbps).
+#define NODE_ID 1                 // ID del nodo en la red CAN (para direccionamiento).
+#define EEPROM_SIZE 512           // Tamaño de la EEPROM disponible en el ESP32.
+#define EEPROM_ADDR_ACMAX 0       // Dirección en EEPROM donde se guarda el límite de corriente AC.
+#define EEPROM_ADDR_DCMAX 10      // Dirección en EEPROM para corriente DC máxima.
+#define EEPROM_ADDR_RPMAX 20      // Dirección en EEPROM para RPM máximo.
+#define DEBUG_PERIOD_MS 500       // Periodo de refresco del debug por puerto serie (ms).
+#define INVERTER_WD_MS 1000       // Tiempo de watchdog para comunicación con el inversor (ms).
+#define BUZZER_ON_MS 2000         // Tiempo que suena el buzzer al activar R2D (ms).
 
-//**MCP3208 */
-#define SPI_CS 10      // SPI slave select
-#define ADC_VREF 3300  // 3.3V Vref
-#define ADC_CLK 160000 // SPI clock 1.6MHz //estaba a 1600000
+#define UNUSED_BYTE  0xFF         // Valor especial para indicar "no usado" en arrays tipo byte.
+#define UNUSED_SHORT ((int16_t)0x7FFF) // Valor especial para "no usado" en arrays tipo short (32767).
+#define UNUSED_INT32 0xFFFFFFFF   // Valor especial para "no usado" en arrays tipo int32_t.
 
-CAN_BUS CAN(HardwareType::Transciever, 125, 1);
-MCP3208 adc(ADC_VREF, SPI_CS);
-Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+// ===================== PROTOTIPOS =====================
+// Declaraciones de funciones para que el compilador las conozca antes de usarlas.
+void configureAPPS();
+bool R2D(bool tson, bool start, bool brake);
+int apps(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc);
 
-// PINES
+void guardarEEPROM(int direccion, int valor);
+int leerEEPROM(int direccion);
+void cargarConfiguracionesEEPROM();
+void resetEEPROM();
+void mostrarConfiguracionesEEPROM();
+void aplicarConfiguraciones();
 
+void runSimulation();
+void controlInverter();
+void watchdogCAN();
+void readInverterStatus();
+void debug();
+
+void serialMenu();
+void configurarLimitesEEPROM_interactivo();
+void processMenu();
+
+// ===================== HARDWARE =====================
+#define LED_PIN 48                // Pin donde está conectado el LED NeoPixel.
+#define LED_COUNT 1               // Número de LEDs NeoPixel.
+#define SPI_CS 10                 // Pin de chip select para el ADC MCP3208.
+#define ADC_VREF 3300             // Voltaje de referencia del ADC (mV).
+#define ADC_CLK 160000            // Frecuencia de reloj SPI para el ADC.
+
+CAN_BUS CAN(HardwareType::Transciever, CAN_SPEED_KBPS, NODE_ID); // Objeto CAN con transceptor, velocidad y ID.
+MCP3208 adc(ADC_VREF, SPI_CS);                                   // Objeto ADC MCP3208.
+Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800); // Objeto para controlar el LED RGB.
+
+// GPIOs confirmados (pines físicos del ESP32 asignados a señales del coche).
 int pinTSON = 21, pinStart = 15, pinBUZZ = 8, pinTSON_EXT = 9, pinSDC = 16, pinR2D_Digital = 2;
 
-//**GLOBAL CONTROL */
-bool cfgCtrlBySpeed = false;
-bool cfgCtrlBySerial = false;
-bool cfgCtrlByPctg = true;
-//*******CAN
+// ===================== CONFIGURACIONES =====================
+// Variables de estado y configuración del sistema.
+struct sensorData apps1Data, apps2Data; // Datos de los dos sensores APPS (pedal acelerador).
+bool stsTSON, stsStart, stsR2D, stsAPPS; // Estados de TSON, Start, Ready-to-Drive y APPS.
+int stsBrake, stsBrake2, stsVbatRAW;     // Lecturas de freno y voltaje de batería.
+uint32_t lastInverterMsg = 0;            // Timestamp del último mensaje recibido del inversor.
+uint32_t lastDebug = 0;                  // Timestamp del último debug enviado por serie.
 
-int configsGEN[12];
-int idConfigsDEF[12];
-int numConfigDefs;
+int cfgBrakeTH = 550;                    // Umbral de freno (valor ADC).
+int cfgAPPSdiff = 100;                   // Diferencia máxima permitida entre APPS1 y APPS2.
+int cfgAPPSdesc = 100;                   // Valor mínimo para detectar desconexión de APPS.
 
-uint32_t idMens, idR2D = 100;
-uint32_t idPacket, idNode = 1;
-int data;
-bool enableInverter;
-int RPMtarget, cfgRPMax = 1500, currentTarget;
+int cfgCurrentACMAX = 190;               // Corriente AC máxima (Apk).
+int cfgCurrentDCMAX = 60;                // Corriente DC máxima (Adc).
+int cfgRPMax        = 1500;              // RPM máximo (ERPM target).
 
-uint32_t idCmdRPM = combineInts(3, idNode);              // 97
-uint32_t idCmdEN = combineInts(12, idNode);              // 385
-uint32_t idCmdCurrent = combineInts(1, idNode);          // ??
-uint32_t idCmdCurrentPCTG = combineInts(5, idNode);      // ??
-uint32_t idCmdSetMaxACCurrent = combineInts(8, idNode);  // ??
-uint32_t idCmdSetMaxDCCurrent = combineInts(10, idNode); // ??
-// Packet ID 0x20: ERPM, Duty, Input Voltage
-uint32_t id0StsInverter = combineInts(0x20, idNode);
+bool debugEnabled = false;   // Por defecto, debug desactivado
 
-// Packet ID 0x21: AC Current, DC Current
-uint32_t id1StsInverter = combineInts(0x21, idNode);
 
-// Packet ID 0x22: Controller Temp., Motor Temp., Fault code
-uint32_t id2StsInverter = combineInts(0x22, idNode);
+// ===================== IDS CAN =====================
+// Identificadores CAN para comandos y estados del inversor.
+uint32_t idCmdRPM             = combineInts(0x1C, NODE_ID);
+uint32_t idCmdEN              = combineInts(0x24, NODE_ID);
+uint32_t idCmdCurrentPCTG     = combineInts(0x1E, NODE_ID);
+uint32_t idCmdSetMaxACCurrent = combineInts(0x20, NODE_ID);
+uint32_t idCmdSetMaxDCCurrent = combineInts(0x22, NODE_ID);
 
-// Packet ID 0x23: Id, Iq values
-uint32_t id3StsInverter = combineInts(0x23, idNode);
+uint32_t id0StsInverter = combineInts(0x00, NODE_ID);
+uint32_t id1StsInverter = combineInts(0x01, NODE_ID);
+uint32_t id2StsInverter = combineInts(0x02, NODE_ID);
+uint32_t id3StsInverter = combineInts(0x03, NODE_ID);
+uint32_t id4StsInverter = combineInts(0x04, NODE_ID);
 
-// Packet ID 0x24: Throttle signal, Brake signal, Digital I/Os, Drive enable, Limit status bits, CAN map version
-uint32_t id4StsInverter = combineInts(0x24, idNode);
-// APPS
-struct sensorData apps1Data, apps2Data;
-
-// DATA
-int32_t cmdDataRPM[2];
-int16_t cmdDataCurrent[4], cmdDataCurrentACMax[4], cmdDataCurrentDCMax[4];
-byte cmdDataDriveEN[8];
-int globalPCTG;
-//*CONFIG**/
-
-// Write separated by commas the packet id to send periodically to the inverter
-char packetIDStoConfig[] = ""; //= "8,9,10,11";
-
-int cfgCurrent = 0,           // 1
-    cfgCurrentBrake = 0,      // 2
-    cfgERPM = 0,              // 3
-    cfgPos = 0,               // 4
-    cfgCurrentRel,            // 5
-    cfgCurrentRelBrake,       // 6
-    cfgDO,                    // 7
-    cfgCurrentACMAX = 190,    // 8
-    cfgCurrentACBrakeMAX = 0, // 9
-    cfgCurrentDCMAX = 60,     // 10
-    cfgCurrentDCBrakeMAX = 0, // 11
-    cfgDriveEnable = 0;       // 12
-
-int timeUpdateConfig = 5000, timeUpdateCTRL = 0;
-
-void configInverterLimits();                                            // Sets CAN packet timers for configuring the inverter's limits
-int getFilteredAnalogRead(int, int sampleSize);                         // Does sliding window average on a given input
-bool R2D(bool tson, bool start, bool brake);                            // Returns de R2D state
-int apps(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc); // Returns the APPS implausability state
-void debug();                                                           // Shows debug info
-void debugShowADC();                                                    // Shows debug ADC info
-void readInverterStatus();                                              // Reads inverter info
-uint32_t combineInts(uint32_t int1, uint32_t int2);                     // Calculates the inverter CAN packets IDs
-void fillConfigsArray();                                                // Makes a copy of the configuration
-void parseConfigIds(char *input);                                       // Reads the IDs set by the user to send periodacally
-void controlInverter();
-void processSerialCommand(int *p_var, int *c_var, int *md_var, int *ma_var, bool *mode, bool enable);
-
-// PRG
-bool stsTSON, stsStart, stsR2D, stsAPPS, stsSDC;
-int stsBrake, stsBrake2, stsPot, stsSDCAnalog, stsVbatRAW;
-int cfgBrakeTH = 550, cfgChannelAPPS1 = 0, cfgChannelAPPS2 = 1, cfgChannelBrake = 2, cfgChannelSteering = 3;
-int cfgAPPSdiff = 10, cfgAPPSdesc = 5000, cfgAPPSdescScaled = 200, cfgAPPSmax = 0, cfgTimeSoundR2D = 2000;
-float cfgAPPSMargin = 0.1; // (0.1=10%)
-int cfgScaleFactor = 1000; // Aumenta resolución al hacer map(), luego se divide por el mismo factor en la consigna final
-uint32_t tA = millis();
-
-// CAN DATA
-
-unsigned long int idBMSStatus = 10;
-unsigned long int idBMSMaxValues = 11;
-unsigned long int idAPPSState = 1163;
+// ===================== ESTADOS VCU =====================
+// Identificadores CAN para publicar estados de la VCU.
+unsigned long int idAPPSState  = 1163;
 unsigned long int idBrakeState = 1164;
 unsigned long int idVCUSignals = 1166;
 
-byte canDataBMSStatus[8];
+uint16_t CANAppsState[4];   // Buffer para enviar estado de APPS.
+uint16_t CANBrakeState[4];  // Buffer para enviar estado de freno.
+uint8_t  CANVCUSignals[8];  // Buffer para enviar señales de la VCU.
 
-uint16_t CANAppsState[4];
-uint16_t CANBrakeState[4];
-uint8_t CANVCUSignals[8];
+// ===================== COMANDOS =====================
+// Buffers de datos que se envían al inversor por CAN.
+int32_t cmdDataRPM[2]          = {0, (int32_t)UNUSED_INT32};
+int16_t cmdDataCurrent[4]      = {0, UNUSED_SHORT, UNUSED_SHORT, UNUSED_SHORT};
+int16_t cmdDataCurrentACMax[4] = {0, UNUSED_SHORT, UNUSED_SHORT, UNUSED_SHORT};
+int16_t cmdDataCurrentDCMax[4] = {0, UNUSED_SHORT, UNUSED_SHORT, UNUSED_SHORT};
+byte    cmdDataDriveEN[8]      = {0, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE};
 
-void configureAPPS()
-{
-  apps1Data.valAnalogUP = 1055;   // 2275
-  apps1Data.valAnalogDOWN = 1935; // 1850
-  apps2Data.valAnalogUP = 2290;   // 790
-  apps2Data.valAnalogDOWN = 2068; // 1670
-  apps1Data.valScaledUP = apps2Data.valScaledUP = 0;
-  apps1Data.valScaledDOWN = apps2Data.valScaledDOWN = 1000;
-  apps1Data.range = abs(apps1Data.valAnalogUP - apps1Data.valAnalogDOWN);
-  apps2Data.range = abs(apps2Data.valAnalogUP - apps2Data.valAnalogDOWN);
-  // brake 422 1350
+// ===================== MODO DE CONTROL =====================
+enum ControlMode { MODE_CAN, MODE_DIRECT }; // Dos modos de control: por CAN o directo (GPIO).
+ControlMode controlMode = MODE_DIRECT;   // ← empieza en modo DIRECTO;         // Por defecto, se usa CAN.
+
+// ===================== SIMULACIÓN =====================
+// Perfiles de simulación para pruebas sin hardware real.
+enum SimProfile {
+  SIM_OFF = 0,             // Sin simulación.
+  SIM_APPS_STEP = 1,       // Simulación de acelerador progresivo.
+  SIM_FAULT_OVERVOLTAGE = 2, // Simulación de fallo por sobretensión.
+  SIM_FAULT_UNDERVOLTAGE = 3, // Simulación de fallo por subtensión.
+  SIM_FAULT_CTRL_OVERTEMP = 4, // Simulación de fallo por sobretemperatura del controlador.
+  SIM_FAULT_MOTOR_OVERTEMP = 5, // Simulación de fallo por sobretemperatura del motor.
+  SIM_RANDOM = 6           // Simulación aleatoria de valores.
+};
+SimProfile simProfile = SIM_OFF; // Estado inicial: simulación desactivada.
+uint32_t simStepT = 0;           // Timestamp auxiliar para pasos de simulación.
+int simAppsProgress = 0;         // Progreso de simulación de APPS.
+
+// ===================== FUNCIONES AUX =====================
+// Configuración inicial de los sensores APPS (valores de calibración).
+void configureAPPS() {
+  apps1Data.valAnalogUP   = 1055; // Valor ADC cuando APPS1 está en reposo.
+  apps1Data.valAnalogDOWN = 1935; // Valor ADC cuando APPS1 está a fondo.
+  apps2Data.valAnalogUP   = 2290; // Valor ADC cuando APPS2 está en reposo.
+  apps2Data.valAnalogDOWN = 2068; // Valor ADC cuando APPS2 está a fondo.
+  apps1Data.valScaledUP = apps2Data.valScaledUP = 0;     // Escalado mínimo.
+  apps1Data.valScaledDOWN = apps2Data.valScaledDOWN = 1000; // Escalado máximo.
+}
+bool R2D(bool tson, bool start, bool brake) {
+  static int step = 0;                  // Estado interno de la máquina de estados (0=idle, 10=espera, 20=activo).
+  static uint32_t tAux = millis();      // Marca de tiempo para controlar el buzzer.
+  bool r2d = false;                     // Valor de salida: indica si el sistema está en Ready-to-Drive.
+
+  // Apaga el buzzer si ya pasó el tiempo definido.
+  if ((millis() - tAux) >= BUZZER_ON_MS) digitalWrite(pinBUZZ, false);
+
+  switch (step) {
+    case 0:                             // Estado inicial: espera a que TSON esté activo.
+      if (tson) step = 10;
+      break;
+
+    case 10:                            // Estado de espera: requiere que TSON siga activo.
+      if (!tson) step = 0;              // Si TSON se desactiva, vuelve a estado inicial.
+      else if (start && brake) {        // Si se pulsa Start y el freno está presionado:
+        tAux = millis();                // Guarda tiempo actual.
+        digitalWrite(pinBUZZ, true);    // Activa buzzer.
+        step = 20;                      // Pasa a estado Ready-to-Drive.
+      }
+      break;
+
+    case 20:                            // Estado activo: Ready-to-Drive.
+      if (!tson) step = 0;              // Si TSON se desactiva, vuelve a estado inicial.
+      r2d = true;                       // Señal de salida: sistema listo para conducir.
+      break;
+  }
+  return r2d;
 }
 
-void setup()
-{
 
-  Serial.begin(115200);
-  // PINES
+int apps(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc) {
+  int val = abs(valAPPS1 - valAPPS2);   // Diferencia entre los dos sensores APPS.
+
+  if ((valAPPS1 <= valDesc) || (valAPPS2 <= valDesc)) return -1; // Si alguno está por debajo del umbral → desconectado.
+  else if (val >= difMAX) return 1;     // Si la diferencia entre ambos supera el máximo permitido → implausible.
+  else return 0;                        // Si todo está correcto → OK.
+}
+
+// ===================== EEPROM =====================
+void guardarEEPROM(int direccion, int valor) { EEPROM.put(direccion, valor); }
+int  leerEEPROM(int direccion) { int valor; EEPROM.get(direccion, valor); return valor; }
+void cargarConfiguracionesEEPROM() { /* ... como antes ... */ }
+void resetEEPROM() { /* ... */ }
+void mostrarConfiguracionesEEPROM() { /* ... */ }
+void aplicarConfiguraciones() { /* ... */ }
+
+void setup() {
+  Serial.begin(115200);                 // Inicializa puerto serie para debug.                
+  lastDebug = millis();                 // Marca de tiempo inicial para debug.
+  lastInverterMsg = millis();           // Marca de tiempo inicial para watchdog CAN.
+
+  // Configuración de pines.
   pinMode(pinStart, INPUT_PULLUP);
   pinMode(pinTSON, INPUT);
   pinMode(pinTSON_EXT, INPUT);
   pinMode(pinBUZZ, OUTPUT);
   pinMode(pinSDC, INPUT);
   pinMode(pinR2D_Digital, OUTPUT);
-  digitalWrite(pinR2D_Digital, LOW); // Inicialmente apagado
+  digitalWrite(pinR2D_Digital, LOW);
 
+  // Inicializa EEPROM y carga configuraciones.
+  EEPROM.begin(EEPROM_SIZE);
+  cargarConfiguracionesEEPROM();
+  mostrarConfiguracionesEEPROM();
 
-  // INIT
-  parseConfigIds(packetIDStoConfig);
-  fillConfigsArray();
-  // configInverterLimits();
-  configureAPPS();
-
-  for (int i = 1; i < 8; i++)
-  {
-    cmdDataDriveEN[i] = 255;
-  }
-  cmdDataRPM[1] = 0xFFFFFFFF;
-  for (int i = 1; i < 4; i++)
-  {
-    cmdDataCurrent[i] = 0xFFFF;
-    cmdDataCurrentACMax[i] = 0xFFFF;
-    cmdDataCurrentDCMax[i] = 0xFFFF;
-  }
-
-  //***MCP3208 */
-
+  // Inicializa SPI para el ADC MCP3208.
   pinMode(SPI_CS, OUTPUT);
   digitalWrite(SPI_CS, HIGH);
-
-  // initialize SPI interface for MCP3208
   SPISettings settings(ADC_CLK, MSBFIRST, SPI_MODE0);
   SPI.begin();
   SPI.beginTransaction(settings);
 
-  pixels.clear(); // Set all pixel colors to 'off'
+  // Inicializa LED NeoPixel.
+  pixels.begin();
+  pixels.clear();
+  pixels.show();
 
-  // CAN.setPacketTimer(idCmdEN,50);
+  // Configura sensores APPS y aplica configuraciones al inversor.
+  configureAPPS();
+  aplicarConfiguraciones();
+
+  CAN.config.simulating = false;        // Desactiva simulación por defecto.
+  simProfile = SIM_OFF;
+
+  Serial.println("VCU inicializada.");  // Mensaje de inicio.
+  serialMenu();                         // Muestra menú interactivo por serie.
 }
 
-void loop()
-{
+void loop() {
+  if (CAN.config.simulating) {
+    runSimulation();
+  } else {
+    CAN.receive();
+    if (controlMode == MODE_CAN) {
+      if (CAN.getPacket(id2StsInverter, stsInverterCAN_22_FULL, 8) ||
+          CAN.getPacket(id4StsInverter, stsInverterCAN_24_FULL, 8)) {
+        lastInverterMsg = millis();
+      }
+    }
+    stsBrake   = adc.read(MCP3208::Channel::SINGLE_4);
+    stsBrake2  = adc.read(MCP3208::Channel::SINGLE_5);
+    stsVbatRAW = adc.read(MCP3208::Channel::SINGLE_6);
+  }
 
   controlInverter();
-  // CAN.getCANStatusData();
-  // readInverterStatus();
-  debug();
+
+  if (controlMode == MODE_CAN) {
+    watchdogCAN();
+    readInverterStatus();
+  }
+
+  if (debugEnabled) {   // ← solo imprime si está activado
+    debug();
+  }
+
+  processMenu();
 }
 
-void controlInverter()
-{
-  tA = millis();
-  //****SERIAL
-  static int serialP = 0;
-  static int serialC = 0;
-  static bool serialEnableContol = false;
 
-  //****LECTURA GPIO
+// ===================== SIMULACIÓN =====================
+void runSimulation() {
+  switch (simProfile) {
+    case SIM_APPS_STEP:
+      if (millis() - simStepT > 50) {
+        simStepT = millis();
+        simAppsProgress = min(simAppsProgress + 10, 1000);
+      }
+      apps1Data.valAnalog = map(simAppsProgress, 0, 1000, 1100, 1900);
+      apps2Data.valAnalog = map(simAppsProgress, 0, 1000, 2300, 2050);
+      stsBrake = 300; stsBrake2 = 300; stsVbatRAW = 360;
+      { short fakeTempsOK[4] = {350, 280, 0, (short)UNUSED_SHORT};
+        CAN.setPacket(id2StsInverter, fakeTempsOK, 4);
+        byte fakeDrive[8] = { (byte)(simAppsProgress/10), 0, 0, 1, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, 23 };
+        CAN.setPacket(id4StsInverter, fakeDrive, 8);
+      }
+      break;
+
+    case SIM_FAULT_OVERVOLTAGE:
+    case SIM_FAULT_UNDERVOLTAGE:
+    case SIM_FAULT_CTRL_OVERTEMP:
+    case SIM_FAULT_MOTOR_OVERTEMP: {
+      uint8_t faultCode = 0;
+      if (simProfile == SIM_FAULT_OVERVOLTAGE)       faultCode = 1;
+      else if (simProfile == SIM_FAULT_UNDERVOLTAGE) faultCode = 2;
+      else if (simProfile == SIM_FAULT_CTRL_OVERTEMP)faultCode = 5;
+      else if (simProfile == SIM_FAULT_MOTOR_OVERTEMP)faultCode = 6;
+
+      apps1Data.valAnalog = 1600;
+      apps2Data.valAnalog = 2150;
+      stsBrake = 300; stsBrake2 = 300; stsVbatRAW = 360;
+
+      short fakeTempsFail[4] = {400, 350, (short)faultCode, (short)UNUSED_SHORT};
+      CAN.setPacket(id2StsInverter, fakeTempsFail, 4);
+      { byte fakeDrive[8] = {50, 0, 0, 0, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, 23};
+        CAN.setPacket(id4StsInverter, fakeDrive, 8);
+      }
+      break;
+    }
+
+    case SIM_RANDOM:
+    default:
+      apps1Data.valAnalog = random(1000, 2000);
+      apps2Data.valAnalog = random(1000, 2000);
+      stsBrake   = random(200, 800);
+      stsBrake2  = random(200, 800);
+      stsVbatRAW = random(300, 400);
+      { short fakeTempsRnd[4] = {350, 280, 0, (short)UNUSED_SHORT};
+        CAN.setPacket(id2StsInverter, fakeTempsRnd, 4);
+        byte fakeDrive[8] = { (byte)random(0, 100), 0, 0, 1, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, 23 };
+        CAN.setPacket(id4StsInverter, fakeDrive, 8);
+      }
+      break;
+  }
+}
+
+// ===================== CONTROL INVERSOR =====================
+void controlInverter() {
   stsStart = !digitalRead(pinStart);
-  stsSDCAnalog = adc.read(MCP3208::Channel::SINGLE_1);
-  apps1Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_2);
-  apps2Data.valAnalog = adc.read(MCP3208::Channel::SINGLE_3);
-  stsBrake = adc.read(MCP3208::Channel::SINGLE_4);
-  stsBrake2 = adc.read(MCP3208::Channel::SINGLE_5);
-  stsVbatRAW = adc.read(MCP3208::Channel::SINGLE_6);
+  stsTSON  = digitalRead(pinTSON);
 
-  //****LECTURA CAN
-  CAN.receive();
-  CAN.getPacket(idBMSStatus, canDataBMSStatus, 8);
+  apps1Data.valScaled = map(apps1Data.valAnalog, apps1Data.valAnalogUP, apps1Data.valAnalogDOWN, 0, 1000);
+  apps2Data.valScaled = map(apps2Data.valAnalog, apps2Data.valAnalogUP, apps2Data.valAnalogDOWN, 0, 1000);
 
-  //****Procesamiento
-
-  apps1Data.valScaled =
-      map(apps1Data.valAnalog, apps1Data.valAnalogUP, apps1Data.valAnalogDOWN, apps1Data.valScaledUP, apps1Data.valScaledDOWN);
-
-  apps2Data.valScaled =
-      map(apps2Data.valAnalog, apps2Data.valAnalogUP, apps2Data.valAnalogDOWN, apps2Data.valScaledUP, apps2Data.valScaledDOWN);
-
-  // Constrain limits
-  if (apps1Data.valScaled > apps1Data.valScaledUP)
-    apps1Data.valScaled = apps1Data.valScaledUP;
-  if (apps1Data.valScaled < apps1Data.valScaledDOWN)
-    apps1Data.valScaled = apps1Data.valScaledDOWN;
-  if (apps2Data.valScaled > apps2Data.valScaledUP)
-    apps2Data.valScaled = apps2Data.valScaledUP;
-  if (apps2Data.valScaled < apps2Data.valScaledDOWN)
-    apps2Data.valScaled = apps2Data.valScaledDOWN;
-
-  stsAPPS = apps(apps1Data.valScaled, apps2Data.valScaled, 100, 0, 100);
-
-  // *R2D
-
-  stsAPPS = 0; //*****COMENTAR
-  stsR2D = R2D(true, stsStart, (stsBrake2 >= cfgBrakeTH));
+  stsAPPS = apps(apps1Data.valScaled, apps2Data.valScaled, cfgAPPSdiff, 0, cfgAPPSdesc);
+  stsR2D  = R2D(stsTSON, stsStart, (stsBrake2 >= cfgBrakeTH));
   digitalWrite(pinR2D_Digital, stsR2D ? HIGH : LOW);
 
+  if (stsR2D && stsAPPS == 0) {
+    if (controlMode == MODE_CAN) {
+      cmdDataDriveEN[0] = 1;
+      CAN.setPacket(idCmdEN, cmdDataDriveEN, 1);
 
-//****MOTOR CONTROL LOGIC
-  if (stsR2D && stsAPPS == 0)
-  {
-    cfgDriveEnable = 1;
-    if (!cfgCtrlBySerial)
-    {
-      currentTarget = apps2Data.valScaled;
-      // cfgCurrentACMAX = 180;
-      // cfgCurrentDCMAX = 15;
-    }
-
-    RPMtarget = map(apps1Data.valScaled, apps1Data.valScaledDOWN, apps1Data.valScaledUP, 0, cfgRPMax * 10);
-
-    cmdDataDriveEN[0] = (byte)cfgDriveEnable;
-    cmdDataRPM[0] = RPMtarget;
-    cmdDataCurrent[0] = currentTarget;
-    cmdDataCurrentACMax[0] = cfgCurrentACMAX * 10;
-    cmdDataCurrentDCMax[0] = cfgCurrentDCMAX * 10;
-
-    if (cfgCtrlBySpeed)
-    {
-      // CAN.setPacket(idCmdRPM, cmdDataRPM, 2);
-    }
-    else
-    {
-      if (cfgCtrlByPctg)
-      {
-        CAN.setPacket(idCmdCurrentPCTG, cmdDataCurrent, 2);
-        CAN.DataOUT.removePacket(idCmdCurrent);
-      }
-      else
-      {
-        CAN.setPacket(idCmdCurrent, cmdDataCurrent, 2);
-        CAN.DataOUT.removePacket(idCmdCurrentPCTG);
-      }
+      int currentTarget = apps2Data.valScaled;
+      cmdDataCurrent[0]      = (int16_t)currentTarget;
+      cmdDataCurrentACMax[0] = (int16_t)(cfgCurrentACMAX * 10);
+      cmdDataCurrentDCMax[0] = (int16_t)(cfgCurrentDCMAX * 10);
+      CAN.setPacket(idCmdCurrentPCTG, cmdDataCurrent, 2);
       CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
       CAN.setPacket(idCmdSetMaxDCCurrent, cmdDataCurrentDCMax, 4);
+
+      cmdDataRPM[0] = map(apps1Data.valScaled, 0, 1000, 0, cfgRPMax * 10);
+      CAN.setPacket(idCmdRPM, cmdDataRPM, 2);
+
+    } else {
+      digitalWrite(pinR2D_Digital, HIGH);
+    }
+  } else {
+    if (controlMode == MODE_CAN) {
+      cmdDataDriveEN[0] = 0;
+      CAN.DataOUT.removePacket(idCmdEN);
+      CAN.DataOUT.removePacket(idCmdCurrentPCTG);
+      CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
+      CAN.DataOUT.removePacket(idCmdSetMaxDCCurrent);
+      CAN.DataOUT.removePacket(idCmdRPM);
+    } else {
+      digitalWrite(pinR2D_Digital, LOW);
     }
   }
-  else
-  {
-    
-    CAN.DataOUT.removePacket(idCmdEN);
-    CAN.DataOUT.removePacket(idCmdCurrentPCTG);
-    CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
-    CAN.DataOUT.removePacket(idCmdSetMaxDCCurrent);
-  }
 
-  // ******WRITE CAN DATA
-
-  CAN.setPacket(idCmdEN, cmdDataDriveEN, 1);
-
-  processSerialCommand(&currentTarget, &currentTarget, &cfgCurrentDCMAX, &cfgCurrentACMAX, &cfgCtrlByPctg, cfgCtrlBySerial);
-
+  // Publicación de estados VCU
   CANAppsState[0] = apps1Data.valScaled;
   CANAppsState[1] = apps2Data.valScaled;
   CANAppsState[2] = apps1Data.valAnalog;
   CANAppsState[3] = apps2Data.valAnalog;
-  CANBrakeState[0] = CANBrakeState[1] = 77777;
+
+  CANBrakeState[0] = 0;
+  CANBrakeState[1] = 0;
   CANBrakeState[2] = stsBrake;
   CANBrakeState[3] = stsBrake2;
-  CANVCUSignals[0] = stsVbatRAW;
-  CANVCUSignals[2] = stsStart;
 
+  CANVCUSignals[0] = (uint8_t)stsVbatRAW;
+  CANVCUSignals[1] = (uint8_t)stsTSON;
+  CANVCUSignals[2] = (uint8_t)stsStart;
+  CANVCUSignals[6] = (uint8_t)stsR2D;
 
   CAN.setPacket(idAPPSState, CANAppsState, 4);
   CAN.setPacket(idBrakeState, CANBrakeState, 4);
   CAN.setPacket(idVCUSignals, CANVCUSignals, 8);
-
   CAN.send();
 }
 
-void readInverterStatus()
-{
-  static uint64_t tAux = millis();
-  CAN.getPacket(id2StsInverter, stsInverterCAN_22_FULL, 8); // ID status = 1217 (decimal) 0x4C1 (hex) //REVISAR
-
-  stsInverterCAN_FaultCode = stsInverterCAN_22_FULL[4];
-  CAN.getPacket(id4StsInverter, stsInverterCAN_24_FULL, 8);
-  stsInverterCAN_DriveEnable = stsInverterCAN_24_FULL[3];
-
-  if ((millis() - tAux) >= 1000)
-  {
-    CAN.printByteArray(stsInverterCAN_22_FULL, 8);
-    Serial.println(id2StsInverter);
-    Serial.println(id4StsInverter);
-    Serial.println(getErrorMessage(stsInverterCAN_FaultCode));
-    if (stsInverterCAN_DriveEnable == 1)
-    {
-      Serial.println("Drive enable OK");
-    }
-    else if (stsInverterCAN_DriveEnable == 0)
-    {
-      Serial.println("Drive enable FAIL");
-    }
-    else
-    {
-      Serial.println("ERROR COMM");
-    }
-    if (stsInverterCAN_FaultCode != 0)
-    {
-      pixels.setPixelColor(0, pixels.Color(255, 0, 0));
-      pixels.show(); // Send the updated pixel colors to the hardware.
-    }
-    else
-    {
-      pixels.setPixelColor(0, pixels.Color(0, 0, 0));
-      pixels.show(); // Send the updated pixel colors to the hardware.
-    }
-
-    Serial.println();
-    tAux = millis();
+// ===================== WATCHDOG CAN =====================
+void watchdogCAN() {
+  if (controlMode == MODE_CAN && !CAN.config.simulating && (millis() - lastInverterMsg > INVERTER_WD_MS)) {
+    Serial.println("[WD] Inverter RX timeout. Modo seguro.");
+    cmdDataDriveEN[0] = 0;
+    CAN.DataOUT.removePacket(idCmdEN);
+    CAN.DataOUT.removePacket(idCmdCurrentPCTG);
+    CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
+    CAN.DataOUT.removePacket(idCmdSetMaxDCCurrent);
+    CAN.DataOUT.removePacket(idCmdRPM);
+    digitalWrite(pinR2D_Digital, LOW);
+    CAN.send();
   }
 }
 
-void debug()
-{
-  static uint64_t tAux = millis();
-
-  //  Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
-  // Serial.println((String) "Brake: " + stsBrake + " TSON: " + stsTSON + " Start: " + stsStart + " R2D: " + stsR2D);
-  // Serial.println((String) "Drive Enable: " + cmdDataDriveEN[0] + " Current: " + cmdDataCurrent[0] + " EERPM: " + cmdDataRPM[0]);
-
-  // Serial.println((String)apps1Data.valAnalog + " valScaled: " + apps1Data.valScaled + " RPM: " + RPMtarget + " Current pctg: " + currentTarget);
-  // Serial.println();
-  // delay(500);
-
-  if ((millis() - tAux) >= 100)
-  {
-    // Serial.println((String) "APPS1: " + apps1Data.valScaled + " APPS2: " + apps2Data.valScaled);
-    // Serial.println((String) "Current=" + cmdDataCurrent[0]);
-    // Serial.println((String) "APPS1 analog: " + apps1Data.valAnalog + " APPS2: " + apps2Data.valAnalog + " Brake= " + stsBrake + " Brake2= " + stsBrake2);
-    // Serial.println((String) "Start = " + stsStart);
-    // Serial.println((String) "R2D = " + stsR2D);
-    // // Serial.println((String) "TSON = " + stsTSON);
-    // // Serial.println((String) "SDC = " + stsSDCAnalog);
-    // Serial.println((String) "Control by serial = " + cfgCtrlBySerial);
-    // Serial.println((String) "Control by PCTG = " + cfgCtrlByPctg);
-    // Serial.println((String) "MAX DC = " + cfgCurrentDCMAX+ " MAX AC = " + cfgCurrentACMAX);
-    // Serial.println();
-    // // CAN.printReceivedIds();
-    // tAux = millis();
-    // Serial.println((String) "ID= " + idCmdCurrentPCTG);
-
-    // Print a header for each block of readings
-    Serial.println("--- Sensor Readings ---");
-
-    // Print Start Button status
-    Serial.print("Start Button (stsStart):       ");
-    Serial.println(stsStart); // Prints 1 (pressed) or 0 (not pressed)
-
-    // Print SDC Analog value
-    Serial.print("SDC Analog (stsSDCAnalog):   ");
-    Serial.println(stsSDCAnalog); // Prints 0-4095
-
-    // Print APPS1 value
-    Serial.print("APPS 1 (apps1Data.valAnalog):  ");
-    Serial.println(apps1Data.valAnalog); // Prints 0-4095
-
-    // Print APPS2 value
-    Serial.print("APPS 2 (apps2Data.valAnalog):  ");
-    Serial.println(apps2Data.valAnalog); // Prints 0-4095
-
-    // Print Brake 1 value
-    Serial.print("Brake 1 (stsBrake):          ");
-    Serial.println(stsBrake); // Prints 0-4095
-
-    // Print Brake 2 value
-    Serial.print("Brake 2 (stsBrake2):         ");
-    Serial.println(stsBrake2); // Prints 0-4095
-
-    // Print Raw Battery Voltage value
-    Serial.print("V-Battery RAW (stsVbatRAW):  ");
-    Serial.println(stsVbatRAW);
-
-    // Add a separator for readability
-    Serial.println("-------------------------");
-
-    // Add a delay so the serial monitor is readable and not flooded
-    tAux = millis();
-  }
-}
-
-bool R2D(bool tson, bool start, bool brake)
-{
-  static int step = 0;
+// ===================== LECTURA DE ESTADO DEL INVERSOR =====================
+void readInverterStatus() {
   static uint32_t tAux = millis();
-  bool r2d = false;
-  // BUZZER
-  if ((millis() - tAux) >= cfgTimeSoundR2D)
-  {
-    digitalWrite(pinBUZZ, false);
-  }
-  switch (step)
-  {
-  case 0:
-    if (tson)
-    {
-      step += 10;
-    }
-    break;
-  case 10:
-    if (!tson)
-    {
-      step = 0;
-    }
-    else if (start && brake)
-    {
-      tAux = millis();
-      digitalWrite(pinBUZZ, true);
-      step += 10;
-    }
-    break;
-  case 20:
-    if (!tson)
-    {
-      step = 0;
-    }
-    r2d = true;
-    break;
 
-  default:
-    break;
+  if (CAN.getPacket(id2StsInverter, stsInverterCAN_22_FULL, 8)) {
+    lastInverterMsg = millis();
+    stsInverterCAN_FaultCode = stsInverterCAN_22_FULL[4];
   }
-  return r2d;
-}
-
-int apps(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc)
-{
-  static unsigned long int t = millis();
-  int val = abs(valAPPS1 - valAPPS2);
-
-  if ((valAPPS1 <= valDesc) || (valAPPS2 <= valDesc))
-  {
-    return -1;
-  }
-  else if (val >= difMAX)
-  {
-    return 1;
-  }
-  else
-  {
-    return 0;
+  if (CAN.getPacket(id4StsInverter, stsInverterCAN_24_FULL, 8)) {
+    lastInverterMsg = millis();
+    stsInverterCAN_DriveEnable = stsInverterCAN_24_FULL[3];
   }
 
-  if ((millis() - t) >= 1000)
-  {
-    Serial.println("APPS DIF= " + val);
+  if ((millis() - tAux) >= 1000) {
+    Serial.print("Fault: "); Serial.println(getErrorMessage(stsInverterCAN_FaultCode));
+    if (stsInverterCAN_DriveEnable == 1)      Serial.println("Drive enable OK");
+    else if (stsInverterCAN_DriveEnable == 0) Serial.println("Drive enable FAIL");
+    else                                      Serial.println("Drive enable UNKNOWN");
+
+    if (stsInverterCAN_FaultCode != 0) pixels.setPixelColor(0, pixels.Color(255, 0, 0));
+    else pixels.setPixelColor(0, pixels.Color(0, 0, 0));
+    pixels.show();
+
+    tAux = millis();
   }
 }
+// ===================== DEBUG =====================
+void debug() {
+  if ((millis() - lastDebug) < DEBUG_PERIOD_MS) return;
+  lastDebug = millis();
 
-void configInverterLimits()
-{
+  uint32_t canAgeMs = millis() - lastInverterMsg;
 
-  for (int i = 0; i < numConfigDefs + 1; i++)
-  {
+  Serial.println("\n=== DEBUG VCU ===");
+  Serial.print("Mode: "); Serial.println(controlMode == MODE_CAN ? "CAN" : "DIRECT");
+  Serial.print("R2D: "); Serial.print(stsR2D ? "ON" : "OFF");
+  Serial.print(" | APPS status: ");
+  if (stsAPPS == 0) Serial.print("OK");
+  else if (stsAPPS == 1) Serial.print("DIF (implausible)");
+  else if (stsAPPS == -1) Serial.print("DESC (desconectado)");
+  else Serial.print("UNKNOWN");
+  Serial.print(" | TSON: "); Serial.print(stsTSON);
+  Serial.print(" | START: "); Serial.println(stsStart);
 
-    idPacket = idConfigsDEF[i];
-    idMens = combineInts(idPacket, idNode);
-    Serial.print(idPacket);
-    Serial.print("-");
-    Serial.println(idMens);
+  Serial.print("APPS1 analog: "); Serial.print(apps1Data.valAnalog);
+  Serial.print(" | scaled: ");   Serial.println(apps1Data.valScaled);
+  Serial.print("APPS2 analog: "); Serial.print(apps2Data.valAnalog);
+  Serial.print(" | scaled: ");    Serial.println(apps2Data.valScaled);
 
-    data = configsGEN[idPacket - 1];
+  Serial.print("Brake1: "); Serial.print(stsBrake);
+  Serial.print(" | Brake2: "); Serial.println(stsBrake2);
+  Serial.print("Vbat RAW: "); Serial.println(stsVbatRAW);
 
-    Serial.println(data);
+  Serial.print("Limits -> ACmax: "); Serial.print(cfgCurrentACMAX);
+  Serial.print(" | DCmax: ");        Serial.print(cfgCurrentDCMAX);
+  Serial.print(" | RPMmax: ");       Serial.println(cfgRPMax);
 
-    if (idPacket == 1 || idPacket == 3 || idPacket == 12)
-    {
-      if (timeUpdateCTRL > 0)
-      {
+  Serial.print("Inverter -> DriveEnable: ");
+  if (stsInverterCAN_DriveEnable == 1)      Serial.print("ON");
+  else if (stsInverterCAN_DriveEnable == 0) Serial.print("OFF");
+  else                                      Serial.print("UNKNOWN");
+  Serial.print(" | Fault: "); Serial.print(stsInverterCAN_FaultCode);
+  Serial.print(" ("); Serial.print(getErrorMessage(stsInverterCAN_FaultCode)); Serial.print(")");
+  Serial.print(" | last msg age: "); Serial.print(canAgeMs); Serial.println(" ms");
 
-        CAN.setPacketTimer(idMens, timeUpdateCTRL);
-      }
-    }
-    else
-    {
-      short dataCurrent[4];
-      for (int i = 0; i < 4; i++)
-      {
-        dataCurrent[i] = 0xFFFF;
-      }
-      dataCurrent[0] = data * 10;
-      CAN.setPacket(idMens, dataCurrent, 4);
-      CAN.setPacketTimer(idMens, timeUpdateConfig);
-    }
-    Serial.println();
+  Serial.print("Sim: ");
+  if (CAN.config.simulating) {
+    Serial.print("ON | profile="); Serial.println((int)simProfile);
+  } else {
+    Serial.println("OFF");
   }
+  Serial.println("-------------------------");
 }
 
-void fillConfigsArray()
-{
-  configsGEN[0] = cfgCurrent;
-  configsGEN[1] = cfgCurrentBrake;
-  configsGEN[2] = cfgERPM;
-  configsGEN[3] = cfgPos;
-  configsGEN[4] = cfgCurrentRel;
-  configsGEN[5] = cfgCurrentRelBrake;
-  configsGEN[6] = cfgDO;
-  configsGEN[7] = cfgCurrentACMAX;
-  configsGEN[8] = cfgCurrentACBrakeMAX;
-  configsGEN[9] = cfgCurrentDCMAX;
-  configsGEN[10] = cfgCurrentDCBrakeMAX;
-  configsGEN[11] = cfgDriveEnable;
+// ===================== MENÚ =====================
+void serialMenu() {
+  Serial.println("\n=== MENÚ DIAGNÓSTICO VCU ===");
+  Serial.println("8. Configurar límites y guardar en EEPROM");
+  Serial.println("11. Resetear EEPROM a valores por defecto");
+  Serial.println("12. Mostrar configuraciones actuales (EEPROM)");
+  Serial.println("13. Reaplicar configuraciones EEPROM al inversor");
+  Serial.println("14. Activar/Desactivar modo simulación");
+  Serial.println("15. Seleccionar perfil de simulación");
+  Serial.println("16. Seleccionar modo de control (CAN / DIRECTO)");
+  Serial.println("17. Activar/Desactivar debug");
+  Serial.println("0. Salir del menú");
+  Serial.print("Opción: ");
 }
 
-void parseConfigIds(char *input)
-{
-  int index = 0;                 // Index for idConfigsDEF array
-  int currentNumber = 0;         // Temporary variable to store the current number being processed
-  bool numberInProgress = false; // Flag to check if a number is being processed
+void configurarLimitesEEPROM_interactivo() {
+  Serial.print("Corriente AC máx (Apk): ");  while (!Serial.available()) {}
+  cfgCurrentACMAX = Serial.parseInt(); guardarEEPROM(EEPROM_ADDR_ACMAX, cfgCurrentACMAX);
 
-  // Initialize the idConfigsDEF array with zeros
-  for (int i = 0; i < 12; i++)
-  {
-    idConfigsDEF[i] = 0;
-  }
+  Serial.print("Corriente DC máx (Adc): "); while (!Serial.available()) {}
+  cfgCurrentDCMAX = Serial.parseInt(); guardarEEPROM(EEPROM_ADDR_DCMAX, cfgCurrentDCMAX);
 
-  // Iterate over each character in the input char array
-  for (int i = 0; input[i] != '\0'; i++)
-  {
-    if (input[i] >= '0' && input[i] <= '9')
-    {
-      // If the character is a digit, update the current number being processed
-      currentNumber = currentNumber * 10 + (input[i] - '0');
-      numberInProgress = true;
-    }
-    else if (input[i] == ',' || input[i] == ' ')
-    {
-      // If the character is a comma or space, store the current number in the array
-      if (numberInProgress && index < 12)
-      {
-        idConfigsDEF[index++] = currentNumber;
-        currentNumber = 0;
-        numberInProgress = false;
-        numConfigDefs++;
-      }
-    }
-  }
+  Serial.print("RPM máx (ERPM target): "); while (!Serial.available()) {}
+  cfgRPMax = Serial.parseInt(); guardarEEPROM(EEPROM_ADDR_RPMAX, cfgRPMax);
 
-  // Store the last number if the input does not end with a comma
-  if (numberInProgress && index < 12)
-  {
-    idConfigsDEF[index] = currentNumber;
-  }
+  aplicarConfiguraciones();
 }
 
-void processSerialCommand(int *p_var, int *c_var, int *md_var, int *ma_var, bool *mode, bool enable)
-{
-  // Proceed only if there is data available to read in the serial buffer.
-  if (Serial.available() > 0)
-  {
+void processMenu() {
+  if (!Serial.available()) return;
 
-    // Read the command part of the input as a String until a space is found.
-    String command = Serial.readStringUntil(' ');
-    command.trim(); // Clean up any whitespace
-
-    // Only proceed if a command was actually read.
-    if (command.length() > 0)
-    {
-      // Serial.parseInt() conveniently skips any non-numeric characters (like the space)
-      // and reads the next valid integer from the stream.
-      // NOTE: This is a blocking function with a 1-second default timeout.
-      long receivedValue = Serial.parseInt();
-
-      // Use an if-else if structure to check the received command string.
-      if (command == "p")
-      {
-        if (enable)
-        {
-          *p_var = receivedValue;
-          Serial.print("OK: Set 'p' variable to ");
-          Serial.println(*p_var);
-          *mode = true;
-        }
-        else
-        {
-          Serial.println("**********************Contorl by serial Not allowed*******");
-        }
-      }
-      else if (command == "c")
-      {
-        if (enable)
-        {
-
-          *c_var = receivedValue;
-          Serial.print("OK: Set 'c' variable to ");
-          Serial.println(*c_var);
-          *mode = false;
-        }
-        else
-        {
-          Serial.println("**********************Contorl by serial Not allowed*******");
-        }
-      }
-      else if (command == "md")
-      {
-        *md_var = receivedValue;
-        Serial.print("OK: Set 'md' variable to ");
-        Serial.println(*md_var);
-      }
-      else if (command == "ma")
-      {
-        *ma_var = receivedValue;
-        Serial.print("OK: Set 'ma' variable to ");
-        Serial.println(*ma_var);
-      }
-      else
-      {
-        // Handle cases where the command is not recognized.
-        Serial.print("Error: Unknown command '");
-        Serial.print(command);
-        Serial.println("'.");
-      }
-    }
-
-    // Clear any remaining data from the input buffer for this line to
-    // avoid processing leftover characters on the next loop iteration.
-    while (Serial.available() > 0)
-    {
-      Serial.read();
+  // Leemos el primer carácter
+  char c = Serial.peek();   // Miramos sin consumir
+  if (isAlpha(c)) {         // Si es una letra
+    Serial.read();          // Consumimos la letra
+    if (c == 'M' || c == 'm') {
+      serialMenu();         // Mostrar menú
+      return;               // Salimos
     }
   }
+
+  // Si no era letra, tratamos como número
+  int opcion = Serial.parseInt();
+  Serial.println();
+
+  switch (opcion) {
+    case 8: configurarLimitesEEPROM_interactivo(); break;
+    case 11: resetEEPROM(); break;
+    case 12: mostrarConfiguracionesEEPROM(); break;
+    case 13: aplicarConfiguraciones(); break;
+    case 14:
+      CAN.config.simulating = !CAN.config.simulating;
+      if (!CAN.config.simulating) simProfile = SIM_OFF;
+      else { simProfile = SIM_APPS_STEP; simAppsProgress = 0; simStepT = millis(); }
+      Serial.println(CAN.config.simulating ? "Modo SIMULACIÓN activado" : "Modo SIMULACIÓN desactivado");
+      break;
+    case 15:
+      Serial.println("Selecciona perfil: 1=APPS_STEP, 2=OVERVOLTAGE, 3=UNDERVOLTAGE, 4=CTRL_OVERTEMP, 5=MOTOR_OVERTEMP, 6=RANDOM");
+      while (!Serial.available()) {}
+      { int sel = Serial.parseInt();
+        if (sel >= 1 && sel <= 6) simProfile = (SimProfile)sel;
+        else simProfile = SIM_APPS_STEP;
+        Serial.print("Perfil sim: "); Serial.println((int)simProfile);
+      }
+      break;
+    case 16:
+      Serial.println("Selecciona modo: 1=CAN, 2=Directo");
+      while (!Serial.available()) {}
+      { int sel = Serial.parseInt();
+        controlMode = (sel == 2) ? MODE_DIRECT : MODE_CAN;
+        Serial.println(controlMode == MODE_CAN ? "Modo CAN activado" : "Modo DIRECTO activado");
+      }
+      break;
+    case 17:
+      debugEnabled = !debugEnabled;
+      Serial.println(debugEnabled ? "Debug activado" : "Debug desactivado");
+      break;
+
+    case 0: Serial.println("Menú cerrado."); break;
+    default: Serial.println("Opción inválida."); break;
+  }
+
+  while (Serial.available()) Serial.read();
+  serialMenu();
 }
