@@ -22,9 +22,15 @@ public:
     void init();
     void readAll();
     
-    // Getters
+    // Getters Escaldos
     int getAPPS1Scaled();
     int getAPPS2Scaled();
+    
+    // NUEVOS: Getters Analógicos en crudo (RAW)
+    int getAPPS1Analog();
+    int getAPPS2Analog();
+    
+    // Otros Getters
     int getBrakeAnalog();
     bool isAPPSImplausible();
     int getVbatRaw();

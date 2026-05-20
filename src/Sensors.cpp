@@ -36,6 +36,11 @@ void Sensors::readAll() {
 
 int Sensors::getAPPS1Scaled() { return apps1.valScaled; }
 int Sensors::getAPPS2Scaled() { return apps2.valScaled; }
+
+// NUEVAS IMPLEMENTACIONES
+int Sensors::getAPPS1Analog() { return apps1.valAnalog; }
+int Sensors::getAPPS2Analog() { return apps2.valAnalog; }
+
 int Sensors::getBrakeAnalog() { return stsBrake2; }
 int Sensors::getVbatRaw() { return stsVbatRAW; }
 
