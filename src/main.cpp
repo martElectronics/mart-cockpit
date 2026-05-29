@@ -1,22 +1,21 @@
 #include <Arduino.h>              // Librería base de Arduino: funciones de GPIO, Serial, millis(), etc.
 #include <MART_CAN.h>             // Librería MART_CAN: gestión de comunicación CAN (envío/recepción de frames).
 #include <SPI.h>                  // Librería SPI: comunicación con periféricos por bus SPI (ej. ADC).
-#include <EEPROM.h>               // Librería EEPROM: lectura/escritura de memoria no volátil.
-#include "global.h"               // Archivo propio del proyecto (probablemente define estructuras y constantes).
+#include "global.h"               // Archivo propio del proyecto (estructuras y helpers comunes).
 #include <Mcp320x.h>              // Librería para ADC MCP3208 (conversor analógico-digital de 12 bits).
 #include <Adafruit_NeoPixel.h>    // Librería para controlar LEDs RGB tipo NeoPixel.
 #include "PairedAnalogSensor.h"   // Par de sensores APPS: filtrado, escalado, plausibilidad y autocalibración.
+#include "esp_task_wdt.h"         // Watchdog de tarea del ESP32 (resetea el micro si el loop se cuelga).
 
 // ===================== CONSTANTES =====================
 #define CAN_SPEED_KBPS 125        // Velocidad del bus CAN en kbps (125 kbps).
 #define NODE_ID 1                 // ID del nodo en la red CAN (para direccionamiento).
-#define EEPROM_SIZE 512           // Tamaño de la EEPROM disponible en el ESP32.
-#define EEPROM_ADDR_ACMAX 0       // Dirección en EEPROM donde se guarda el límite de corriente AC.
-#define EEPROM_ADDR_DCMAX 10      // Dirección en EEPROM para corriente DC máxima.
-#define EEPROM_ADDR_RPMAX 20      // Dirección en EEPROM para RPM máximo.
 #define DEBUG_PERIOD_MS 500       // Periodo de refresco del debug por puerto serie (ms).
 #define INVERTER_WD_MS 1000       // Tiempo de watchdog para comunicación con el inversor (ms).
 #define BUZZER_ON_MS 2000         // Tiempo que suena el buzzer al activar R2D (ms).
+#define TASK_WDT_TIMEOUT_S 2      // Timeout del watchdog del micro: resetea si el loop no responde en este tiempo.
+// NOTA: no se usa EEPROM. El ESP32-S3 no tiene EEPROM real (se emularía en flash);
+// si en el futuro hace falta persistencia, usar Preferences (NVS), no EEPROM.
 
 // --- BMS por CAN (bms_master_26, rama testing) ---
 #define ID_BMS_STATUS 10          // ID 10 (0x0A): Estado general del BMS. DLC 1, ~800 ms.
@@ -32,13 +31,6 @@
 PairedAnalogSensorConfig buildAppsConfig();
 bool R2D(bool sdc, bool start, bool brake);
 
-void guardarEEPROM(int direccion, int valor);
-int leerEEPROM(int direccion);
-void cargarConfiguracionesEEPROM();
-void resetEEPROM();
-void mostrarConfiguracionesEEPROM();
-void aplicarConfiguraciones();
-
 void runSimulation();
 void controlInverter();
 void watchdogCAN();
@@ -46,7 +38,6 @@ void readInverterStatus();
 void debug();
 
 void serialMenu();
-void configurarLimitesEEPROM_interactivo();
 void processMenu();
 
 // ===================== HARDWARE =====================
@@ -61,7 +52,8 @@ MCP3208 adc(ADC_VREF, SPI_CS);                                   // Objeto ADC M
 Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800); // Objeto para controlar el LED RGB.
 
 // GPIOs confirmados (pines físicos del ESP32 asignados a señales del coche).
-int pinTSON = 21, pinStart = 15, pinBUZZ = 8, pinTSON_EXT = 9, pinSDC = 16, pinR2D_Digital = 2;
+// (TSON y SDC ya no se leen por GPIO: SDC llega por CAN, TSON queda para la próxima PCB.)
+int pinStart = 15, pinBUZZ = 8, pinR2D_Digital = 2;
 
 // ===================== CONFIGURACIONES =====================
 // Variables de estado y configuración del sistema.
@@ -119,8 +111,8 @@ int16_t cmdDataCurrentDCMax[4] = {0, UNUSED_SHORT, UNUSED_SHORT, UNUSED_SHORT};
 byte    cmdDataDriveEN[8]      = {0, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE};
 
 // ===================== MODO DE CONTROL =====================
-enum ControlMode { MODE_CAN, MODE_DIRECT }; // Dos modos de control: por CAN o directo (GPIO).
-ControlMode controlMode = MODE_DIRECT;   // ← empieza en modo DIRECTO;         // Por defecto, se usa CAN.
+enum ControlMode { MODE_CAN, MODE_DIRECT }; // Control del par: por CAN (comandos al inversor) o DIRECTO (solo pin DriveEnable).
+ControlMode controlMode = MODE_DIRECT;      // Modo por defecto: DIRECTO.
 
 // ===================== SIMULACIÓN =====================
 // Perfiles de simulación para pruebas sin hardware real.
@@ -211,14 +203,6 @@ bool R2D(bool sdc, bool start, bool brake) {
 }
 
 
-// ===================== EEPROM =====================
-void guardarEEPROM(int direccion, int valor) { EEPROM.put(direccion, valor); }
-int  leerEEPROM(int direccion) { int valor; EEPROM.get(direccion, valor); return valor; }
-void cargarConfiguracionesEEPROM() { /* ... como antes ... */ }
-void resetEEPROM() { /* ... */ }
-void mostrarConfiguracionesEEPROM() { /* ... */ }
-void aplicarConfiguraciones() { /* ... */ }
-
 void setup() {
   Serial.begin(115200);                 // Inicializa puerto serie para debug.                
   lastDebug = millis();                 // Marca de tiempo inicial para debug.
@@ -227,17 +211,19 @@ void setup() {
 
   // Configuración de pines.
   pinMode(pinStart, INPUT_PULLUP);
-  pinMode(pinTSON, INPUT);
-  pinMode(pinTSON_EXT, INPUT);
   pinMode(pinBUZZ, OUTPUT);
-  pinMode(pinSDC, INPUT);
   pinMode(pinR2D_Digital, OUTPUT);
-  digitalWrite(pinR2D_Digital, LOW);
+  digitalWrite(pinR2D_Digital, LOW);   // Estado seguro: DriveEnable LOW al arrancar.
+  // (Recomendado: pull-down hardware en pinR2D_Digital para que esté LOW durante el boot/reset.)
 
-  // Inicializa EEPROM y carga configuraciones.
-  EEPROM.begin(EEPROM_SIZE);
-  cargarConfiguracionesEEPROM();
-  mostrarConfiguracionesEEPROM();
+  // Watchdog del micro: si el loop se cuelga > TASK_WDT_TIMEOUT_S, resetea (DriveEnable a LOW).
+#if defined(ESP_ARDUINO_VERSION) && (ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0))
+  esp_task_wdt_config_t wdtCfg = { .timeout_ms = TASK_WDT_TIMEOUT_S * 1000, .idle_core_mask = 0, .trigger_panic = true };
+  esp_task_wdt_init(&wdtCfg);
+#else
+  esp_task_wdt_init(TASK_WDT_TIMEOUT_S, true);
+#endif
+  esp_task_wdt_add(NULL);              // Monitoriza la tarea del loop().
 
   // Inicializa SPI para el ADC MCP3208.
   pinMode(SPI_CS, OUTPUT);
@@ -253,7 +239,6 @@ void setup() {
 
   // La auto-calibración del APPS la hace AnalogSensor internamente por tabla de voltaje
   // (ver buildAppsConfig). Con la tabla vacía se usan los límites estáticos.
-  aplicarConfiguraciones();
 
   CAN.config.simulating = false;        // Desactiva simulación por defecto.
   simProfile = SIM_OFF;
@@ -302,6 +287,8 @@ void loop() {
   }
 
   processMenu();
+
+  esp_task_wdt_reset();   // Alimenta el watchdog del micro (si el loop se cuelga, reset -> DriveEnable LOW).
 }
 
 
@@ -375,16 +362,22 @@ void controlInverter() {
   bool appsOk = (appsState == SensorState::NORMAL);
   int  appsThrottle = (int)appsMeanS;   // Consigna 0..1000 (la clase ya devuelve 0 si hay implausibilidad).
 
-  stsR2D  = R2D(stsSDC, stsStart, (stsBrake2 >= cfgBrakeTH));
-  digitalWrite(pinR2D_Digital, stsR2D ? HIGH : LOW);
+  stsR2D = R2D(stsSDC, stsStart, (stsBrake2 >= cfgBrakeTH));
 
-  if (stsR2D && appsOk) {
-    if (controlMode == MODE_CAN) {
+  // ---- Fuente única de verdad para habilitar par ----
+  // Una sola condición gobierna TANTO el pin digital DriveEnable COMO el comando CAN.
+  // (Antes el pin seguía a stsR2D a secas e ignoraba el APPS en modo CAN.)
+  bool inverterFault = (stsInverterCAN_FaultCode != 0);
+  bool driveEnabled  = stsR2D && appsOk && !inverterFault;
+
+  digitalWrite(pinR2D_Digital, driveEnabled ? HIGH : LOW);
+
+  if (controlMode == MODE_CAN) {
+    if (driveEnabled) {
       cmdDataDriveEN[0] = 1;
       CAN.setPacket(idCmdEN, cmdDataDriveEN, 1);
 
-      int currentTarget = appsThrottle;
-      cmdDataCurrent[0]      = (int16_t)currentTarget;
+      cmdDataCurrent[0]      = (int16_t)appsThrottle;
       cmdDataCurrentACMax[0] = (int16_t)(cfgCurrentACMAX * 10);
       cmdDataCurrentDCMax[0] = (int16_t)(cfgCurrentDCMAX * 10);
       CAN.setPacket(idCmdCurrentPCTG, cmdDataCurrent, 2);
@@ -393,22 +386,17 @@ void controlInverter() {
 
       cmdDataRPM[0] = map(appsThrottle, 0, 1000, 0, cfgRPMax * 10);
       CAN.setPacket(idCmdRPM, cmdDataRPM, 2);
-
     } else {
-      digitalWrite(pinR2D_Digital, HIGH);
-    }
-  } else {
-    if (controlMode == MODE_CAN) {
       cmdDataDriveEN[0] = 0;
       CAN.DataOUT.removePacket(idCmdEN);
       CAN.DataOUT.removePacket(idCmdCurrentPCTG);
       CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
       CAN.DataOUT.removePacket(idCmdSetMaxDCCurrent);
       CAN.DataOUT.removePacket(idCmdRPM);
-    } else {
-      digitalWrite(pinR2D_Digital, LOW);
     }
   }
+  // En MODE_DIRECT el par lo gobierna solo el pin digital (ya fijado arriba).
+  // Si el CAN del BMS cae, stsSDC pasa a false (watchdog) -> stsR2D false -> pin LOW.
 
   // Publicación de estados VCU
   CANAppsState[0] = (uint16_t)appsSensor.getSensor1().getScaledValue();
@@ -421,10 +409,15 @@ void controlInverter() {
   CANBrakeState[2] = stsBrake;
   CANBrakeState[3] = stsBrake2;
 
-  CANVCUSignals[0] = (uint8_t)stsVbatRAW;
-  CANVCUSignals[1] = (uint8_t)stsSDC;
-  CANVCUSignals[2] = (uint8_t)stsStart;
-  CANVCUSignals[6] = (uint8_t)stsR2D;
+  // Layout idVCUSignals (1166): b0-1 Vbat_raw (u16 BE), b2 SDC, b3 Start, b4 R2D,
+  // b5 estado APPS (0=NORMAL,1=IMPLAUSIBLE,2=PENDING). ACTUALIZAR config del receptor.
+  uint16_t vbatRaw = (uint16_t)stsVbatRAW;
+  CANVCUSignals[0] = (uint8_t)(vbatRaw >> 8);
+  CANVCUSignals[1] = (uint8_t)(vbatRaw & 0xFF);
+  CANVCUSignals[2] = (uint8_t)stsSDC;
+  CANVCUSignals[3] = (uint8_t)stsStart;
+  CANVCUSignals[4] = (uint8_t)stsR2D;
+  CANVCUSignals[5] = (uint8_t)appsState;
 
   CAN.setPacket(idAPPSState, CANAppsState, 4);
   CAN.setPacket(idBrakeState, CANBrakeState, 4);
@@ -527,10 +520,6 @@ void debug() {
 // ===================== MENÚ =====================
 void serialMenu() {
   Serial.println("\n=== MENÚ DIAGNÓSTICO VCU ===");
-  Serial.println("8. Configurar límites y guardar en EEPROM");
-  Serial.println("11. Resetear EEPROM a valores por defecto");
-  Serial.println("12. Mostrar configuraciones actuales (EEPROM)");
-  Serial.println("13. Reaplicar configuraciones EEPROM al inversor");
   Serial.println("14. Activar/Desactivar modo simulación");
   Serial.println("15. Seleccionar perfil de simulación");
   Serial.println("16. Seleccionar modo de control (CAN / DIRECTO)");
@@ -539,21 +528,15 @@ void serialMenu() {
   Serial.print("Opción: ");
 }
 
-void configurarLimitesEEPROM_interactivo() {
-  Serial.print("Corriente AC máx (Apk): ");  while (!Serial.available()) {}
-  cfgCurrentACMAX = Serial.parseInt(); guardarEEPROM(EEPROM_ADDR_ACMAX, cfgCurrentACMAX);
-
-  Serial.print("Corriente DC máx (Adc): "); while (!Serial.available()) {}
-  cfgCurrentDCMAX = Serial.parseInt(); guardarEEPROM(EEPROM_ADDR_DCMAX, cfgCurrentDCMAX);
-
-  Serial.print("RPM máx (ERPM target): "); while (!Serial.available()) {}
-  cfgRPMax = Serial.parseInt(); guardarEEPROM(EEPROM_ADDR_RPMAX, cfgRPMax);
-
-  aplicarConfiguraciones();
-}
-
 void processMenu() {
   if (!Serial.available()) return;
+
+  // Seguridad: el menú (que puede bloquear esperando entrada) solo se usa en parado.
+  if (stsR2D) {
+    Serial.println("Menú bloqueado: R2D activo.");
+    while (Serial.available()) Serial.read();
+    return;
+  }
 
   // Leemos el primer carácter
   char c = Serial.peek();   // Miramos sin consumir
@@ -570,10 +553,6 @@ void processMenu() {
   Serial.println();
 
   switch (opcion) {
-    case 8: configurarLimitesEEPROM_interactivo(); break;
-    case 11: resetEEPROM(); break;
-    case 12: mostrarConfiguracionesEEPROM(); break;
-    case 13: aplicarConfiguraciones(); break;
     case 14:
       CAN.config.simulating = !CAN.config.simulating;
       if (!CAN.config.simulating) simProfile = SIM_OFF;
@@ -582,7 +561,7 @@ void processMenu() {
       break;
     case 15:
       Serial.println("Selecciona perfil: 1=APPS_STEP, 2=OVERVOLTAGE, 3=UNDERVOLTAGE, 4=CTRL_OVERTEMP, 5=MOTOR_OVERTEMP, 6=RANDOM");
-      while (!Serial.available()) {}
+      while (!Serial.available()) { esp_task_wdt_reset(); }
       { int sel = Serial.parseInt();
         if (sel >= 1 && sel <= 6) simProfile = (SimProfile)sel;
         else simProfile = SIM_APPS_STEP;
@@ -591,7 +570,7 @@ void processMenu() {
       break;
     case 16:
       Serial.println("Selecciona modo: 1=CAN, 2=Directo");
-      while (!Serial.available()) {}
+      while (!Serial.available()) { esp_task_wdt_reset(); }
       { int sel = Serial.parseInt();
         controlMode = (sel == 2) ? MODE_DIRECT : MODE_CAN;
         Serial.println(controlMode == MODE_CAN ? "Modo CAN activado" : "Modo DIRECTO activado");
