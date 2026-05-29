@@ -158,14 +158,24 @@ PairedAnalogSensorConfig buildAppsConfig() {
   // Coherencia del par: implausible si difieren >10% durante >100 ms (FSAE T.4.2.4).
   c.cfgMaxDeviationPercent = 10.0;
   c.cfgDeviationTimeout    = 100;
+
+  // Auto-calibración por voltaje (AnalogSensor): rellenar cuando haya datos de
+  // caracterización del APPS a varios voltajes de batería LV. Ejemplo:
+  //   c.cfgSensor1.cfgVoltageCalibrationTable = {
+  //       {11.5f, 1040, 1920}, {12.0f, 1055, 1935}, {13.0f, 1075, 1960} };
+  //   c.cfgSensor2.cfgVoltageCalibrationTable = {
+  //       {11.5f, 2300, 2075}, {12.0f, 2290, 2068}, {13.0f, 2280, 2060} };
+  // Con la tabla vacía se usan los límites estáticos cfgAdcMinNormal/MaxNormal.
   return c;
 }
 
-// Promedia N lecturas de un canal del MCP3208 (usado en la autocalibración).
-static uint16_t averageAdc(MCP3208::Channel ch, int n) {
-  uint32_t acc = 0;
-  for (int i = 0; i < n; ++i) { acc += adc.read(ch); delayMicroseconds(200); }
-  return (uint16_t)(acc / n);
+// Convierte la lectura cruda de batería (stsVbatRAW) a voltios para la auto-calibración.
+// TODO: ajustar VBAT_DIVIDER al divisor real de la placa. Mientras las tablas de voltaje
+// estén vacías este valor no afecta (AnalogSensor usa los límites estáticos).
+static float vbatVolts() {
+  const float VBAT_DIVIDER = 1.0f;                              // relación real Vbat/Vadc (PENDIENTE)
+  float vadc = (stsVbatRAW * (ADC_VREF / 1000.0f)) / 4095.0f;   // ADC_VREF en mV -> V en el pin
+  return vadc * VBAT_DIVIDER;
 }
 // Precondición: SDC presente (recibido del BMS por CAN). Con el SDC activo, al pulsar
 // Start con el freno pisado -> Ready-to-Drive (con buzzer). Si el SDC cae en cualquier
@@ -241,15 +251,8 @@ void setup() {
   pixels.clear();
   pixels.show();
 
-  // Autocalibración del reposo del APPS (se asume pedal suelto al conectar la batería).
-  // La guarda interna rechaza la calibración si la lectura está en corto o fuera de banda.
-  {
-    uint16_t a1 = averageAdc(MCP3208::Channel::SINGLE_2, 64);
-    uint16_t a2 = averageAdc(MCP3208::Channel::SINGLE_3, 64);
-    bool calOk = appsSensor.calibrateRest(a1, a2);
-    Serial.printf("Autocal APPS reposo: %s (A1=%u A2=%u)\n",
-                  calOk ? "OK" : "RECHAZADA (fuera de banda)", a1, a2);
-  }
+  // La auto-calibración del APPS la hace AnalogSensor internamente por tabla de voltaje
+  // (ver buildAppsConfig). Con la tabla vacía se usan los límites estáticos.
   aplicarConfiguraciones();
 
   CAN.config.simulating = false;        // Desactiva simulación por defecto.
@@ -368,7 +371,7 @@ void controlInverter() {
   // Procesa el par APPS: filtra, escala (0..1000) y detecta implausibilidad
   // (corto a GND/VCC, fuera de rango y desviación >10% entre ambos durante >100 ms).
   float appsMeanF, appsMeanS, appsSensF, appsSensS;
-  appsSensor.update(rawApps1, rawApps2, appsMeanF, appsMeanS, appsSensF, appsSensS, appsState);
+  appsSensor.update(rawApps1, rawApps2, vbatVolts(), appsMeanF, appsMeanS, appsSensF, appsSensS, appsState);
   bool appsOk = (appsState == SensorState::NORMAL);
   int  appsThrottle = (int)appsMeanS;   // Consigna 0..1000 (la clase ya devuelve 0 si hay implausibilidad).
 
@@ -532,7 +535,6 @@ void serialMenu() {
   Serial.println("15. Seleccionar perfil de simulación");
   Serial.println("16. Seleccionar modo de control (CAN / DIRECTO)");
   Serial.println("17. Activar/Desactivar debug");
-  Serial.println("18. Calibrar APPS a FONDO (pisa el pedal a tope)");
   Serial.println("0. Salir del menú");
   Serial.print("Opción: ");
 }
@@ -599,16 +601,6 @@ void processMenu() {
       debugEnabled = !debugEnabled;
       Serial.println(debugEnabled ? "Debug activado" : "Debug desactivado");
       break;
-    case 18: {
-      Serial.println("Pisa el pedal a FONDO y manda cualquier tecla para capturar...");
-      while (!Serial.available()) {}
-      uint16_t a1 = averageAdc(MCP3208::Channel::SINGLE_2, 64);
-      uint16_t a2 = averageAdc(MCP3208::Channel::SINGLE_3, 64);
-      bool ok = appsSensor.calibrateFull(a1, a2);
-      Serial.printf("Calib APPS fondo: %s (A1=%u A2=%u)\n",
-                    ok ? "OK" : "RECHAZADA (fuera de banda)", a1, a2);
-      break;
-    }
 
     case 0: Serial.println("Menú cerrado."); break;
     default: Serial.println("Opción inválida."); break;

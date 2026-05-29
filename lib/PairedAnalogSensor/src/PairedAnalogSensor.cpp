@@ -3,8 +3,8 @@
 
 PairedAnalogSensor::PairedAnalogSensor(const PairedAnalogSensorConfig& config)
     : mConfig(config),
-      mSensor1(config.cfgSensor1),
-      mSensor2(config.cfgSensor2),
+      mSensor1(mConfig.cfgSensor1),
+      mSensor2(mConfig.cfgSensor2),
       mSensitive(nullptr),
       mFilteredValue(0.0),
       mScaledValue(0.0),
@@ -23,40 +23,34 @@ PairedAnalogSensor::PairedAnalogSensor(const PairedAnalogSensorConfig& config)
     }
 }
 
-void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2,
+void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2, float currentVoltage,
         float& meanFilteredValue, float& meanScaledValue,
         float& sensitiveFilteredValue, float& sensitiveScaledValue,
         SensorState& state) {
 
-    // Valores sensor 1
-    float filteredValue1;
-    float scaledValue1;
+    float filteredValue1, scaledValue1;
     SensorState state1;
-    // Valores sensor 2
-    float filteredValue2;
-    float scaledValue2;
+    float filteredValue2, scaledValue2;
     SensorState state2;
 
-    // 1. Actualizar cada sensor individualmente
-    mSensor1.update(rawValue1, filteredValue1, scaledValue1, state1);
-    mSensor2.update(rawValue2, filteredValue2, scaledValue2, state2);
+    // 1. Actualizar cada sensor individualmente (con compensación por voltaje).
+    mSensor1.update(rawValue1, currentVoltage, filteredValue1, scaledValue1, state1);
+    mSensor2.update(rawValue2, currentVoltage, filteredValue2, scaledValue2, state2);
 
-    // 2. Comprobar la plausibilidad entre ambos
+    // 2. Comprobar la plausibilidad entre ambos.
     mCheckPlausibility();
 
-    // 3. Calcular los valores medios sólo si el estado es normal
-    // fix #1: cada media va a su variable correcta (antes estaban intercambiadas).
+    // 3. Calcular los valores medios sólo si el estado es normal.
     if (mState == SensorState::NORMAL) {
         mScaledValue = (scaledValue1 + scaledValue2) / 2.0f;
         mFilteredValue = (filteredValue1 + filteredValue2) / 2.0f;
     } else {
-        // En caso de fallo, la salida debe ser segura (0 para el acelerador)
+        // En caso de fallo, la salida debe ser segura (0 para el acelerador).
         mScaledValue = 0.0f;
         mFilteredValue = 0.0f;
     }
 
-    // Valores a devolver
-    // fix #2: cada parámetro de salida recibe el valor correcto (antes cruzados).
+    // 4. Valores a devolver.
     meanScaledValue = getMeanScaledValue();
     meanFilteredValue = getMeanFilteredValue();
     sensitiveFilteredValue = getSensitiveFilteredValue();
@@ -64,25 +58,18 @@ void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2,
     state = getSensorState();
 }
 
-bool PairedAnalogSensor::calibrateRest(uint16_t rawValue1, uint16_t rawValue2) {
-    // Atómico: valida ambos antes de aplicar ninguno
-    if (!mSensor1.isRestCalibrationValid(rawValue1)) return false;
-    if (!mSensor2.isRestCalibrationValid(rawValue2)) return false;
-    mSensor1.calibrateRest(rawValue1);
-    mSensor2.calibrateRest(rawValue2);
-    return true;
-}
-
-bool PairedAnalogSensor::calibrateFull(uint16_t rawValue1, uint16_t rawValue2) {
-    if (!mSensor1.isFullCalibrationValid(rawValue1)) return false;
-    if (!mSensor2.isFullCalibrationValid(rawValue2)) return false;
-    mSensor1.calibrateFull(rawValue1);
-    mSensor2.calibrateFull(rawValue2);
-    return true;
+void PairedAnalogSensor::update(uint16_t rawValue1, uint16_t rawValue2,
+        float& meanFilteredValue, float& meanScaledValue,
+        float& sensitiveFilteredValue, float& sensitiveScaledValue,
+        SensorState& state) {
+    // Sin compensación por voltaje: límites estáticos.
+    update(rawValue1, rawValue2, -1.0f,
+           meanFilteredValue, meanScaledValue,
+           sensitiveFilteredValue, sensitiveScaledValue, state);
 }
 
 void PairedAnalogSensor::mCheckPlausibility() {
-    // Primero, comprobar si alguno de los sensores ha fallado individualmente
+    // Primero, comprobar si alguno de los sensores ha fallado individualmente.
     if (mSensor1.getSensorState() == SensorState::IMPLAUSIBILITY
         && mSensor2.getSensorState() == SensorState::IMPLAUSIBILITY) {
         mDeviationTiming = false;
@@ -103,13 +90,13 @@ void PairedAnalogSensor::mCheckPlausibility() {
         return;
     }
 
-    // Si ambos sensores están bien, comprobar la desviación entre ellos
+    // Si ambos sensores están bien, comprobar la desviación entre ellos.
     float scaledValue1 = mSensor1.getScaledValue();
     float scaledValue2 = mSensor2.getScaledValue();
 
-    // Usamos el rango de salida del primer sensor como referencia para el porcentaje
+    // Rango de salida del primer sensor como referencia para el porcentaje.
     float outputRange = mConfig.cfgSensor1.cfgScaledOutputMax - mConfig.cfgSensor1.cfgScaledOutputMin;
-    if (outputRange <= 0) { // Evitar división por cero
+    if (outputRange <= 0) { // Evitar división por cero.
         mDeviationTiming = false;
         mState = SensorState::NORMAL;
         mImplausibilityType = PairedImplausibilityType::NONE;
@@ -119,7 +106,7 @@ void PairedAnalogSensor::mCheckPlausibility() {
     float deviation = std::abs(scaledValue1 - scaledValue2);
     float deviationPercent = (deviation / outputRange) * 100.0f;
 
-    // fix #3: la desviación debe mantenerse cfgDeviationTimeout ms antes de cortar.
+    // La desviación debe mantenerse cfgDeviationTimeout ms antes de cortar.
     if (deviationPercent > mConfig.cfgMaxDeviationPercent) {
         if (!mDeviationTiming) {
             mDeviationTiming = true;
@@ -129,7 +116,6 @@ void PairedAnalogSensor::mCheckPlausibility() {
             mState = SensorState::IMPLAUSIBILITY;
             mImplausibilityType = PairedImplausibilityType::DEVIATION_FAULT;
         } else {
-            // Aún dentro de la ventana: no es fallo todavía
             mState = SensorState::NORMAL;
             mImplausibilityType = PairedImplausibilityType::NONE;
         }
@@ -142,17 +128,10 @@ void PairedAnalogSensor::mCheckPlausibility() {
 
 // Getters
 float PairedAnalogSensor::getMeanScaledValue() const { return mScaledValue; }
-
 float PairedAnalogSensor::getMeanFilteredValue() const { return mFilteredValue; }
-
 float PairedAnalogSensor::getSensitiveScaledValue() const { return mSensitive->getScaledValue(); }
-
 float PairedAnalogSensor::getSensitiveFilteredValue() const { return mSensitive->getFilteredValue(); }
-
 SensorState PairedAnalogSensor::getSensorState() const { return mState; }
-
 PairedImplausibilityType PairedAnalogSensor::getImplausibilityType() const { return mImplausibilityType; }
-
 const AnalogSensor& PairedAnalogSensor::getSensor1() const { return mSensor1; }
-
 const AnalogSensor& PairedAnalogSensor::getSensor2() const { return mSensor2; }

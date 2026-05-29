@@ -20,32 +20,35 @@ struct PairedAnalogSensorConfig {
     // --- Configuración de la Coherencia del PAR ---
     float cfgMaxDeviationPercent = 10.0;
 
-    // fix #3: la desviación entre sensores debe persistir este tiempo (ms) antes de
-    // declararse implausible (regla FSAE: >10% durante >100 ms).
+    // La desviación entre sensores debe persistir este tiempo (ms) antes de declararse
+    // implausible (regla FSAE: >10% durante >100 ms).
     uint32_t cfgDeviationTimeout = 100;
 };
 
+// Empareja dos AnalogSensor (de la ESP32-Global-Library) y añade la comprobación de
+// coherencia entre ambos. Cada sensor hace su propio filtrado, escalado, plausibilidad
+// individual y auto-calibración por tabla de voltaje (si se configura).
 class PairedAnalogSensor {
 public:
-    // Constructor que recibe la configuración completa para el par
     PairedAnalogSensor(const PairedAnalogSensorConfig& config);
 
-    // fix #5: la clase posee punteros internos (mSensitive); prohibimos la copia para
-    // evitar dobles liberaciones / punteros colgantes.
+    // La clase posee un puntero observador (mSensitive); prohibimos la copia.
     PairedAnalogSensor(const PairedAnalogSensor&) = delete;
     PairedAnalogSensor& operator=(const PairedAnalogSensor&) = delete;
 
-    // Método principal para actualizar con las lecturas de ambos sensores
-    void update(uint16_t rawValue1, uint16_t rawValue2,
+    // Actualiza con las lecturas de ambos sensores y el voltaje del sistema (para la
+    // auto-calibración dinámica de AnalogSensor). Pasa currentVoltage < 0 para usar
+    // los límites estáticos (sin compensación por voltaje).
+    void update(uint16_t rawValue1, uint16_t rawValue2, float currentVoltage,
         float& meanFilteredValue, float& meanScaledValue,
         float& sensitiveFilteredValue, float& sensitiveScaledValue,
         SensorState& state);
 
-    // --- Autocalibración ---
-    // Calibra el punto de reposo / fondo de ambos sensores de forma atómica: sólo
-    // aplica si AMBAS lecturas son válidas (si una falla, no toca ninguna).
-    bool calibrateRest(uint16_t rawValue1, uint16_t rawValue2);
-    bool calibrateFull(uint16_t rawValue1, uint16_t rawValue2);
+    // Sobrecarga sin voltaje (límites estáticos).
+    void update(uint16_t rawValue1, uint16_t rawValue2,
+        float& meanFilteredValue, float& meanScaledValue,
+        float& sensitiveFilteredValue, float& sensitiveScaledValue,
+        SensorState& state);
 
     // Getters para valores medios
     float getMeanScaledValue() const;
@@ -55,7 +58,7 @@ public:
     float getSensitiveScaledValue() const;
     float getSensitiveFilteredValue() const;
 
-    // Estados generales del pair
+    // Estados generales del par
     SensorState getSensorState() const;
     PairedImplausibilityType getImplausibilityType() const;
 
@@ -64,11 +67,10 @@ public:
     const AnalogSensor& getSensor2() const;
 
 private:
-    // Atributos privados
-    PairedAnalogSensorConfig mConfig;     // fix #4: por valor, no por referencia
-    AnalogSensor mSensor1;                // fix #5: por valor, sin new/delete
+    PairedAnalogSensorConfig mConfig;     // Configuración por valor.
+    AnalogSensor mSensor1;                // Sensores por valor (sin new/delete).
     AnalogSensor mSensor2;
-    AnalogSensor* mSensitive;             // puntero observador a mSensor1 o mSensor2
+    AnalogSensor* mSensitive;             // Puntero observador a mSensor1 o mSensor2.
 
     float mFilteredValue;
     float mScaledValue;
@@ -76,11 +78,10 @@ private:
     SensorState mState;
     PairedImplausibilityType mImplausibilityType;
 
-    // fix #3: temporización de la desviación entre sensores
+    // Temporización de la desviación entre sensores
     bool mDeviationTiming;
     uint32_t mDeviationStartTime;
 
-    // Método privado para la lógica de comprobación
     void mCheckPlausibility();
 };
 
