@@ -1,205 +1,50 @@
-#include <Arduino.h>              // Librería base de Arduino: funciones de GPIO, Serial, millis(), etc.
-#include <MART_CAN.h>             // Librería MART_CAN: gestión de comunicación CAN (envío/recepción de frames).
-#include <SPI.h>                  // Librería SPI: comunicación con periféricos por bus SPI (ej. ADC).
-#include "global.h"               // Archivo propio del proyecto (estructuras y helpers comunes).
-#include <Mcp320x.h>              // Librería para ADC MCP3208 (conversor analógico-digital de 12 bits).
-#include <Adafruit_NeoPixel.h>    // Librería para controlar LEDs RGB tipo NeoPixel.
-#include "PairedAnalogSensor.h"   // Par de sensores APPS: filtrado, escalado, plausibilidad y autocalibración.
-#include "esp_task_wdt.h"         // Watchdog de tarea del ESP32 (resetea el micro si el loop se cuelga).
-#include "Config.h"               // Parametrización centralizada (namespace cfg).
-
-// ===================== CONSTANTES (alias de include/Config.h) =====================
-// Toda la parametrización vive en include/Config.h (namespace cfg). Aquí se exponen
-// con los nombres usados en este archivo. (EEPROM eliminada: el ESP32-S3 no tiene
-// EEPROM real; usar Preferences/NVS si hiciera falta persistencia.)
-#define UNUSED_BYTE  0xFF
-#define UNUSED_SHORT ((int16_t)0x7FFF)
-#define UNUSED_INT32 0xFFFFFFFF
-
-// CAN / nodo / tiempos
-constexpr unsigned  CAN_SPEED_KBPS     = cfg::CAN_SPEED_KBPS;
-constexpr int       NODE_ID            = cfg::NODE_ID;
-constexpr uint32_t  DEBUG_PERIOD_MS    = cfg::DEBUG_PERIOD_MS;
-constexpr uint32_t  INVERTER_WD_MS     = cfg::INVERTER_WD_MS;
-constexpr uint32_t  BUZZER_ON_MS       = cfg::BUZZER_ON_MS;
-constexpr uint32_t  TASK_WDT_TIMEOUT_S = cfg::TASK_WDT_TIMEOUT_S;
-// BMS por CAN
-constexpr uint32_t  ID_BMS_STATUS      = cfg::ID_BMS_STATUS;
-constexpr uint8_t   BMS_SDC_BIT        = cfg::BMS_SDC_BIT;
-constexpr uint32_t  BMS_WD_MS          = cfg::BMS_WD_MS;
-// Hardware (ADC / LED / SPI)
-constexpr uint16_t  ADC_VREF           = cfg::ADC_VREF;
-constexpr uint32_t  ADC_CLK            = cfg::ADC_CLK;
-constexpr uint8_t   SPI_CS             = cfg::PIN_SPI_CS;
-constexpr uint8_t   LED_PIN            = cfg::PIN_LED;
-constexpr uint8_t   LED_COUNT          = cfg::LED_COUNT;
-// Pines de E/S
-constexpr uint8_t   pinStart           = cfg::PIN_START;
-constexpr uint8_t   pinBUZZ            = cfg::PIN_BUZZER;
-constexpr uint8_t   pinR2D_Digital     = cfg::PIN_R2D_DIGITAL;
-// IDs de comandos al inversor
-constexpr uint32_t  idCmdRPM             = cfg::ID_CMD_RPM;
-constexpr uint32_t  idCmdEN              = cfg::ID_CMD_EN;
-constexpr uint32_t  idCmdCurrentPCTG     = cfg::ID_CMD_CURRENT_PCTG;
-constexpr uint32_t  idCmdSetMaxACCurrent = cfg::ID_CMD_SET_MAX_AC;
-constexpr uint32_t  idCmdSetMaxDCCurrent = cfg::ID_CMD_SET_MAX_DC;
-// IDs de estado del inversor
-constexpr uint32_t  id2StsInverter       = cfg::ID_STS_INV_2;
-constexpr uint32_t  id4StsInverter       = cfg::ID_STS_INV_4;
-// IDs de telemetría publicada por la VCU
-constexpr unsigned long idAPPSState  = cfg::ID_APPS_STATE;
-constexpr unsigned long idBrakeState = cfg::ID_BRAKE_STATE;
-constexpr unsigned long idVCUSignals = cfg::ID_VCU_SIGNALS;
-// Límites de control
-constexpr int  cfgBrakeTH      = cfg::BRAKE_TH;
-constexpr int  cfgCurrentACMAX = cfg::CURRENT_AC_MAX;
-constexpr int  cfgCurrentDCMAX = cfg::CURRENT_DC_MAX;
-constexpr int  cfgRPMax        = cfg::RPM_MAX;
-
-// ===================== PROTOTIPOS =====================
-// Declaraciones de funciones para que el compilador las conozca antes de usarlas.
-PairedAnalogSensorConfig buildAppsConfig();
-bool R2D(bool sdc, bool start, bool brake);
-
-void runSimulation();
-void controlInverter();
-void watchdogCAN();
-void readInverterStatus();
-void debug();
-
-void serialMenu();
-void processMenu();
+//==============================================================================
+// main.cpp — VCU MART. Punto de entrada: define el estado compartido (declarado en
+// Vcu.h) y orquesta setup()/loop(). La lógica vive en los módulos:
+//   R2d.cpp · Simulation.cpp · InverterControl.cpp · Diagnostics.cpp
+// La parametrización está en include/Config.h (namespace cfg).
+//==============================================================================
+#include <SPI.h>
+#include "Vcu.h"
 
 // ===================== HARDWARE =====================
-CAN_BUS CAN(HardwareType::Transciever, CAN_SPEED_KBPS, NODE_ID); // Objeto CAN con transceptor, velocidad y ID.
-MCP3208 adc(ADC_VREF, SPI_CS);                                   // Objeto ADC MCP3208.
-Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800); // Objeto para controlar el LED RGB.
+CAN_BUS CAN(HardwareType::Transciever, CAN_SPEED_KBPS, NODE_ID); // CAN por transceptor.
+MCP3208 adc(ADC_VREF, SPI_CS);                                   // ADC MCP3208.
+Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
-// ===================== CONFIGURACIONES =====================
-// Variables de estado y configuración del sistema.
-PairedAnalogSensorConfig appsCfg = buildAppsConfig();  // Configuración del par APPS (definición más abajo).
-PairedAnalogSensor appsSensor(appsCfg);                // Par de sensores APPS: filtrado + plausibilidad + autocal.
-uint16_t rawApps1 = 0, rawApps2 = 0;                   // Lecturas crudas de APPS1/APPS2 (ADC o simuladas).
-SensorState appsState = SensorState::NORMAL;           // Estado de plausibilidad del par APPS.
-bool stsStart, stsR2D;                   // Estados de Start y Ready-to-Drive. (TSON: próxima iteración de PCB)
-bool stsSDC = false;                     // SDC (shutdown circuit) recibido del BMS por CAN (ID 10, byte 0, bit 2).
-int stsBrake, stsBrake2, stsVbatRAW;     // Lecturas de freno y voltaje de batería.
-byte canBMSStatus[1];                    // Buffer de recepción del estado del BMS (ID 10).
-uint32_t lastInverterMsg = 0;            // Timestamp del último mensaje recibido del inversor.
-uint32_t lastBMSMsg = 0;                 // Timestamp de la última trama de estado del BMS (para watchdog SDC).
-uint32_t lastDebug = 0;                  // Timestamp del último debug enviado por serie.
+// ===================== APPS =====================
+PairedAnalogSensorConfig appsCfg = buildAppsConfig();
+PairedAnalogSensor appsSensor(appsCfg);
+uint16_t rawApps1 = 0, rawApps2 = 0;
+SensorState appsState = SensorState::NORMAL;
 
-bool debugEnabled = false;   // Por defecto, debug desactivado
+// ===================== ESTADO VCU =====================
+bool stsStart = false, stsR2D = false, stsSDC = false;
+int  stsBrake = 0, stsBrake2 = 0, stsVbatRAW = 0;
+byte canBMSStatus[1];
+uint32_t lastInverterMsg = 0, lastBMSMsg = 0, lastDebug = 0;
+bool debugEnabled = false;
 
+// ===================== BUFFERS DE TELEMETRÍA =====================
+uint16_t CANAppsState[4];
+uint16_t CANBrakeState[4];
+uint8_t  CANVCUSignals[8];
 
-// ===================== ESTADOS VCU =====================
-uint16_t CANAppsState[4];   // Buffer para enviar estado de APPS.
-uint16_t CANBrakeState[4];  // Buffer para enviar estado de freno.
-uint8_t  CANVCUSignals[8];  // Buffer para enviar señales de la VCU.
-
-// ===================== COMANDOS =====================
-// Buffers de datos que se envían al inversor por CAN.
+// ===================== BUFFERS DE COMANDOS AL INVERSOR =====================
 int32_t cmdDataRPM[2]          = {0, (int32_t)UNUSED_INT32};
 int16_t cmdDataCurrent[4]      = {0, UNUSED_SHORT, UNUSED_SHORT, UNUSED_SHORT};
 int16_t cmdDataCurrentACMax[4] = {0, UNUSED_SHORT, UNUSED_SHORT, UNUSED_SHORT};
 int16_t cmdDataCurrentDCMax[4] = {0, UNUSED_SHORT, UNUSED_SHORT, UNUSED_SHORT};
 byte    cmdDataDriveEN[8]      = {0, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE};
 
-// ===================== MODO DE CONTROL =====================
-enum ControlMode { MODE_CAN, MODE_DIRECT }; // Control del par: por CAN (comandos al inversor) o DIRECTO (solo pin DriveEnable).
-ControlMode controlMode = MODE_DIRECT;      // Modo por defecto: DIRECTO.
-
-// ===================== SIMULACIÓN =====================
-// Perfiles de simulación para pruebas sin hardware real.
-enum SimProfile {
-  SIM_OFF = 0,             // Sin simulación.
-  SIM_APPS_STEP = 1,       // Simulación de acelerador progresivo.
-  SIM_FAULT_OVERVOLTAGE = 2, // Simulación de fallo por sobretensión.
-  SIM_FAULT_UNDERVOLTAGE = 3, // Simulación de fallo por subtensión.
-  SIM_FAULT_CTRL_OVERTEMP = 4, // Simulación de fallo por sobretemperatura del controlador.
-  SIM_FAULT_MOTOR_OVERTEMP = 5, // Simulación de fallo por sobretemperatura del motor.
-  SIM_RANDOM = 6           // Simulación aleatoria de valores.
-};
-SimProfile simProfile = SIM_OFF; // Estado inicial: simulación desactivada.
-uint32_t simStepT = 0;           // Timestamp auxiliar para pasos de simulación.
-int simAppsProgress = 0;         // Progreso de simulación de APPS.
-
-// ===================== FUNCIONES AUX =====================
-// Construye la configuración del par APPS (calibración, escalado, filtrado, plausibilidad).
-PairedAnalogSensorConfig buildAppsConfig() {
-  PairedAnalogSensorConfig c;
-  // APPS1 (normal: el ADC sube con el pedal). Reposo 1055 -> Fondo 1935.
-  c.cfgSensor1.cfgAdcMinNormal    = 1055;
-  c.cfgSensor1.cfgAdcMaxNormal    = 1935;
-  c.cfgSensor1.cfgScaledOutputMin = 0;
-  c.cfgSensor1.cfgScaledOutputMax = 1000;
-  c.cfgSensor1.cfgFilterType      = FilterType::EWMA;
-  c.cfgSensor1.cfgFilterAlpha     = 0.2;
-  // APPS2 (INVERSO: el ADC baja con el pedal). Reposo 2290 -> Fondo 2068.
-  c.cfgSensor2.cfgAdcMinNormal    = 2290;
-  c.cfgSensor2.cfgAdcMaxNormal    = 2068;
-  c.cfgSensor2.cfgScaledOutputMin = 0;
-  c.cfgSensor2.cfgScaledOutputMax = 1000;
-  c.cfgSensor2.cfgFilterType      = FilterType::EWMA;
-  c.cfgSensor2.cfgFilterAlpha     = 0.2;
-  // Coherencia del par: implausible si difieren >10% durante >100 ms (FSAE T.4.2.4).
-  c.cfgMaxDeviationPercent = 10.0;
-  c.cfgDeviationTimeout    = 100;
-
-  // Auto-calibración por voltaje (AnalogSensor): rellenar cuando haya datos de
-  // caracterización del APPS a varios voltajes de batería LV. Ejemplo:
-  //   c.cfgSensor1.cfgVoltageCalibrationTable = {
-  //       {11.5f, 1040, 1920}, {12.0f, 1055, 1935}, {13.0f, 1075, 1960} };
-  //   c.cfgSensor2.cfgVoltageCalibrationTable = {
-  //       {11.5f, 2300, 2075}, {12.0f, 2290, 2068}, {13.0f, 2280, 2060} };
-  // Con la tabla vacía se usan los límites estáticos cfgAdcMinNormal/MaxNormal.
-  return c;
-}
-
-// Convierte la lectura cruda de batería (stsVbatRAW) a voltios para la auto-calibración.
-// TODO: ajustar VBAT_DIVIDER al divisor real de la placa. Mientras las tablas de voltaje
-// estén vacías este valor no afecta (AnalogSensor usa los límites estáticos).
-static float vbatVolts() {
-  const float VBAT_DIVIDER = 1.0f;                              // relación real Vbat/Vadc (PENDIENTE)
-  float vadc = (stsVbatRAW * (ADC_VREF / 1000.0f)) / 4095.0f;   // ADC_VREF en mV -> V en el pin
-  return vadc * VBAT_DIVIDER;
-}
-// Precondición: SDC presente (recibido del BMS por CAN). Con el SDC activo, al pulsar
-// Start con el freno pisado -> Ready-to-Drive (con buzzer). Si el SDC cae en cualquier
-// momento, vuelve a reposo. (TSON se añadirá en la próxima iteración de PCB.)
-bool R2D(bool sdc, bool start, bool brake) {
-  static int step = 0;                  // Estado interno de la máquina de estados (0=idle, 10=espera, 20=activo).
-  static uint32_t tAux = millis();      // Marca de tiempo para controlar el buzzer.
-  bool r2d = false;                     // Valor de salida: indica si el sistema está en Ready-to-Drive.
-
-  // Apaga el buzzer si ya pasó el tiempo definido.
-  if ((millis() - tAux) >= BUZZER_ON_MS) digitalWrite(pinBUZZ, false);
-
-  switch (step) {
-    case 0:                             // Estado inicial: espera a que el SDC esté presente.
-      if (sdc) step = 10;
-      break;
-
-    case 10:                            // Estado de espera: requiere que el SDC siga presente.
-      if (!sdc) step = 0;               // Si el SDC se cae, vuelve a estado inicial.
-      else if (start && brake) {        // Si se pulsa Start y el freno está presionado:
-        tAux = millis();                // Guarda tiempo actual.
-        digitalWrite(pinBUZZ, true);    // Activa buzzer.
-        step = 20;                      // Pasa a estado Ready-to-Drive.
-      }
-      break;
-
-    case 20:                            // Estado activo: Ready-to-Drive.
-      if (!sdc) step = 0;               // Si el SDC se cae, vuelve a estado inicial.
-      r2d = true;                       // Señal de salida: sistema listo para conducir.
-      break;
-  }
-  return r2d;
-}
-
+// ===================== MODO DE CONTROL / SIMULACIÓN =====================
+ControlMode controlMode = MODE_DIRECT;   // Modo por defecto: DIRECTO.
+SimProfile  simProfile  = SIM_OFF;
+uint32_t    simStepT    = 0;
+int         simAppsProgress = 0;
 
 void setup() {
-  Serial.begin(115200);                 // Inicializa puerto serie para debug.                
+  Serial.begin(115200);                 // Inicializa puerto serie para debug.
   lastDebug = millis();                 // Marca de tiempo inicial para debug.
   lastInverterMsg = millis();           // Marca de tiempo inicial para watchdog CAN.
   lastBMSMsg = millis();                // Marca de tiempo inicial para watchdog del BMS (SDC).
@@ -284,302 +129,4 @@ void loop() {
   processMenu();
 
   esp_task_wdt_reset();   // Alimenta el watchdog del micro (si el loop se cuelga, reset -> DriveEnable LOW).
-}
-
-
-// ===================== SIMULACIÓN =====================
-void runSimulation() {
-  stsSDC = true;        // En simulación damos el SDC por presente para poder probar el R2D.
-  lastBMSMsg = millis();
-  switch (simProfile) {
-    case SIM_APPS_STEP:
-      if (millis() - simStepT > 50) {
-        simStepT = millis();
-        simAppsProgress = min(simAppsProgress + 10, 1000);
-      }
-      rawApps1 = map(simAppsProgress, 0, 1000, 1100, 1900);
-      rawApps2 = map(simAppsProgress, 0, 1000, 2300, 2050);
-      stsBrake = 300; stsBrake2 = 300; stsVbatRAW = 360;
-      { short fakeTempsOK[4] = {350, 280, 0, (short)UNUSED_SHORT};
-        CAN.setPacket(id2StsInverter, fakeTempsOK, 4);
-        byte fakeDrive[8] = { (byte)(simAppsProgress/10), 0, 0, 1, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, 23 };
-        CAN.setPacket(id4StsInverter, fakeDrive, 8);
-      }
-      break;
-
-    case SIM_FAULT_OVERVOLTAGE:
-    case SIM_FAULT_UNDERVOLTAGE:
-    case SIM_FAULT_CTRL_OVERTEMP:
-    case SIM_FAULT_MOTOR_OVERTEMP: {
-      uint8_t faultCode = 0;
-      if (simProfile == SIM_FAULT_OVERVOLTAGE)       faultCode = 1;
-      else if (simProfile == SIM_FAULT_UNDERVOLTAGE) faultCode = 2;
-      else if (simProfile == SIM_FAULT_CTRL_OVERTEMP)faultCode = 5;
-      else if (simProfile == SIM_FAULT_MOTOR_OVERTEMP)faultCode = 6;
-
-      rawApps1 = 1600;
-      rawApps2 = 2150;
-      stsBrake = 300; stsBrake2 = 300; stsVbatRAW = 360;
-
-      short fakeTempsFail[4] = {400, 350, (short)faultCode, (short)UNUSED_SHORT};
-      CAN.setPacket(id2StsInverter, fakeTempsFail, 4);
-      { byte fakeDrive[8] = {50, 0, 0, 0, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, 23};
-        CAN.setPacket(id4StsInverter, fakeDrive, 8);
-      }
-      break;
-    }
-
-    case SIM_RANDOM:
-    default:
-      rawApps1 = random(1000, 2000);
-      rawApps2 = random(1000, 2000);
-      stsBrake   = random(200, 800);
-      stsBrake2  = random(200, 800);
-      stsVbatRAW = random(300, 400);
-      { short fakeTempsRnd[4] = {350, 280, 0, (short)UNUSED_SHORT};
-        CAN.setPacket(id2StsInverter, fakeTempsRnd, 4);
-        byte fakeDrive[8] = { (byte)random(0, 100), 0, 0, 1, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, 23 };
-        CAN.setPacket(id4StsInverter, fakeDrive, 8);
-      }
-      break;
-  }
-}
-
-// ===================== CONTROL INVERSOR =====================
-void controlInverter() {
-  stsStart = !digitalRead(pinStart);
-  // stsSDC se actualiza en loop() desde el BMS por CAN (ya no se lee TSON por GPIO).
-
-  // Procesa el par APPS: filtra, escala (0..1000) y detecta implausibilidad
-  // (corto a GND/VCC, fuera de rango y desviación >10% entre ambos durante >100 ms).
-  float appsMeanF, appsMeanS, appsSensF, appsSensS;
-  appsSensor.update(rawApps1, rawApps2, vbatVolts(), appsMeanF, appsMeanS, appsSensF, appsSensS, appsState);
-  bool appsOk = (appsState == SensorState::NORMAL);
-  int  appsThrottle = (int)appsMeanS;   // Consigna 0..1000 (la clase ya devuelve 0 si hay implausibilidad).
-
-  stsR2D = R2D(stsSDC, stsStart, (stsBrake2 >= cfgBrakeTH));
-
-  // ---- Fuente única de verdad para habilitar par ----
-  // Una sola condición gobierna TANTO el pin digital DriveEnable COMO el comando CAN.
-  // (Antes el pin seguía a stsR2D a secas e ignoraba el APPS en modo CAN.)
-  bool inverterFault = (stsInverterCAN_FaultCode != 0);
-  bool driveEnabled  = stsR2D && appsOk && !inverterFault;
-
-  digitalWrite(pinR2D_Digital, driveEnabled ? HIGH : LOW);
-
-  if (controlMode == MODE_CAN) {
-    if (driveEnabled) {
-      cmdDataDriveEN[0] = 1;
-      CAN.setPacket(idCmdEN, cmdDataDriveEN, 1);
-
-      cmdDataCurrent[0]      = (int16_t)appsThrottle;
-      cmdDataCurrentACMax[0] = (int16_t)(cfgCurrentACMAX * 10);
-      cmdDataCurrentDCMax[0] = (int16_t)(cfgCurrentDCMAX * 10);
-      CAN.setPacket(idCmdCurrentPCTG, cmdDataCurrent, 2);
-      CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
-      CAN.setPacket(idCmdSetMaxDCCurrent, cmdDataCurrentDCMax, 4);
-
-      cmdDataRPM[0] = map(appsThrottle, 0, 1000, 0, cfgRPMax * 10);
-      CAN.setPacket(idCmdRPM, cmdDataRPM, 2);
-    } else {
-      cmdDataDriveEN[0] = 0;
-      CAN.DataOUT.removePacket(idCmdEN);
-      CAN.DataOUT.removePacket(idCmdCurrentPCTG);
-      CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
-      CAN.DataOUT.removePacket(idCmdSetMaxDCCurrent);
-      CAN.DataOUT.removePacket(idCmdRPM);
-    }
-  }
-  // En MODE_DIRECT el par lo gobierna solo el pin digital (ya fijado arriba).
-  // Si el CAN del BMS cae, stsSDC pasa a false (watchdog) -> stsR2D false -> pin LOW.
-
-  // Publicación de estados VCU
-  CANAppsState[0] = (uint16_t)appsSensor.getSensor1().getScaledValue();
-  CANAppsState[1] = (uint16_t)appsSensor.getSensor2().getScaledValue();
-  CANAppsState[2] = rawApps1;
-  CANAppsState[3] = rawApps2;
-
-  CANBrakeState[0] = 0;
-  CANBrakeState[1] = 0;
-  CANBrakeState[2] = stsBrake;
-  CANBrakeState[3] = stsBrake2;
-
-  // Layout idVCUSignals (1166): b0-1 Vbat_raw (u16 BE), b2 SDC, b3 Start, b4 R2D,
-  // b5 estado APPS (0=NORMAL,1=IMPLAUSIBLE,2=PENDING). ACTUALIZAR config del receptor.
-  uint16_t vbatRaw = (uint16_t)stsVbatRAW;
-  CANVCUSignals[0] = (uint8_t)(vbatRaw >> 8);
-  CANVCUSignals[1] = (uint8_t)(vbatRaw & 0xFF);
-  CANVCUSignals[2] = (uint8_t)stsSDC;
-  CANVCUSignals[3] = (uint8_t)stsStart;
-  CANVCUSignals[4] = (uint8_t)stsR2D;
-  CANVCUSignals[5] = (uint8_t)appsState;
-
-  CAN.setPacket(idAPPSState, CANAppsState, 4);
-  CAN.setPacket(idBrakeState, CANBrakeState, 4);
-  CAN.setPacket(idVCUSignals, CANVCUSignals, 8);
-  CAN.send();
-}
-
-// ===================== WATCHDOG CAN =====================
-void watchdogCAN() {
-  if (controlMode == MODE_CAN && !CAN.config.simulating && (millis() - lastInverterMsg > INVERTER_WD_MS)) {
-    Serial.println("[WD] Inverter RX timeout. Modo seguro.");
-    cmdDataDriveEN[0] = 0;
-    CAN.DataOUT.removePacket(idCmdEN);
-    CAN.DataOUT.removePacket(idCmdCurrentPCTG);
-    CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
-    CAN.DataOUT.removePacket(idCmdSetMaxDCCurrent);
-    CAN.DataOUT.removePacket(idCmdRPM);
-    digitalWrite(pinR2D_Digital, LOW);
-    CAN.send();
-  }
-}
-
-// ===================== LECTURA DE ESTADO DEL INVERSOR =====================
-void readInverterStatus() {
-  static uint32_t tAux = millis();
-
-  if (CAN.getPacket(id2StsInverter, stsInverterCAN_22_FULL, 8)) {
-    lastInverterMsg = millis();
-    stsInverterCAN_FaultCode = stsInverterCAN_22_FULL[4];
-  }
-  if (CAN.getPacket(id4StsInverter, stsInverterCAN_24_FULL, 8)) {
-    lastInverterMsg = millis();
-    stsInverterCAN_DriveEnable = stsInverterCAN_24_FULL[3];
-  }
-
-  if ((millis() - tAux) >= 1000) {
-    Serial.print("Fault: "); Serial.println(getErrorMessage(stsInverterCAN_FaultCode));
-    if (stsInverterCAN_DriveEnable == 1)      Serial.println("Drive enable OK");
-    else if (stsInverterCAN_DriveEnable == 0) Serial.println("Drive enable FAIL");
-    else                                      Serial.println("Drive enable UNKNOWN");
-
-    if (stsInverterCAN_FaultCode != 0) pixels.setPixelColor(0, pixels.Color(255, 0, 0));
-    else pixels.setPixelColor(0, pixels.Color(0, 0, 0));
-    pixels.show();
-
-    tAux = millis();
-  }
-}
-// ===================== DEBUG =====================
-void debug() {
-  if ((millis() - lastDebug) < DEBUG_PERIOD_MS) return;
-  lastDebug = millis();
-
-  uint32_t canAgeMs = millis() - lastInverterMsg;
-
-  Serial.println("\n=== DEBUG VCU ===");
-  Serial.print("Mode: "); Serial.println(controlMode == MODE_CAN ? "CAN" : "DIRECT");
-  Serial.print("R2D: "); Serial.print(stsR2D ? "ON" : "OFF");
-  Serial.print(" | APPS status: ");
-  switch (appsState) {
-    case SensorState::NORMAL:         Serial.print("OK"); break;
-    case SensorState::PENDING:        Serial.print("PENDING"); break;
-    case SensorState::IMPLAUSIBILITY: Serial.print("IMPLAUSIBLE"); break;
-  }
-  Serial.print(" | SDC: "); Serial.print(stsSDC);
-  Serial.print(" (BMS age "); Serial.print(millis() - lastBMSMsg); Serial.print(" ms)");
-  Serial.print(" | START: "); Serial.println(stsStart);
-
-  Serial.print("APPS1 analog: "); Serial.print(appsSensor.getSensor1().getRawValue());
-  Serial.print(" | scaled: ");   Serial.println(appsSensor.getSensor1().getScaledValue());
-  Serial.print("APPS2 analog: "); Serial.print(appsSensor.getSensor2().getRawValue());
-  Serial.print(" | scaled: ");    Serial.println(appsSensor.getSensor2().getScaledValue());
-  Serial.print("APPS throttle (media): "); Serial.println(appsSensor.getMeanScaledValue());
-
-  Serial.print("Brake1: "); Serial.print(stsBrake);
-  Serial.print(" | Brake2: "); Serial.println(stsBrake2);
-  Serial.print("Vbat RAW: "); Serial.println(stsVbatRAW);
-
-  Serial.print("Limits -> ACmax: "); Serial.print(cfgCurrentACMAX);
-  Serial.print(" | DCmax: ");        Serial.print(cfgCurrentDCMAX);
-  Serial.print(" | RPMmax: ");       Serial.println(cfgRPMax);
-
-  Serial.print("Inverter -> DriveEnable: ");
-  if (stsInverterCAN_DriveEnable == 1)      Serial.print("ON");
-  else if (stsInverterCAN_DriveEnable == 0) Serial.print("OFF");
-  else                                      Serial.print("UNKNOWN");
-  Serial.print(" | Fault: "); Serial.print(stsInverterCAN_FaultCode);
-  Serial.print(" ("); Serial.print(getErrorMessage(stsInverterCAN_FaultCode)); Serial.print(")");
-  Serial.print(" | last msg age: "); Serial.print(canAgeMs); Serial.println(" ms");
-
-  Serial.print("Sim: ");
-  if (CAN.config.simulating) {
-    Serial.print("ON | profile="); Serial.println((int)simProfile);
-  } else {
-    Serial.println("OFF");
-  }
-  Serial.println("-------------------------");
-}
-
-// ===================== MENÚ =====================
-void serialMenu() {
-  Serial.println("\n=== MENÚ DIAGNÓSTICO VCU ===");
-  Serial.println("14. Activar/Desactivar modo simulación");
-  Serial.println("15. Seleccionar perfil de simulación");
-  Serial.println("16. Seleccionar modo de control (CAN / DIRECTO)");
-  Serial.println("17. Activar/Desactivar debug");
-  Serial.println("0. Salir del menú");
-  Serial.print("Opción: ");
-}
-
-void processMenu() {
-  if (!Serial.available()) return;
-
-  // Seguridad: el menú (que puede bloquear esperando entrada) solo se usa en parado.
-  if (stsR2D) {
-    Serial.println("Menú bloqueado: R2D activo.");
-    while (Serial.available()) Serial.read();
-    return;
-  }
-
-  // Leemos el primer carácter
-  char c = Serial.peek();   // Miramos sin consumir
-  if (isAlpha(c)) {         // Si es una letra
-    Serial.read();          // Consumimos la letra
-    if (c == 'M' || c == 'm') {
-      serialMenu();         // Mostrar menú
-      return;               // Salimos
-    }
-  }
-
-  // Si no era letra, tratamos como número
-  int opcion = Serial.parseInt();
-  Serial.println();
-
-  switch (opcion) {
-    case 14:
-      CAN.config.simulating = !CAN.config.simulating;
-      if (!CAN.config.simulating) simProfile = SIM_OFF;
-      else { simProfile = SIM_APPS_STEP; simAppsProgress = 0; simStepT = millis(); }
-      Serial.println(CAN.config.simulating ? "Modo SIMULACIÓN activado" : "Modo SIMULACIÓN desactivado");
-      break;
-    case 15:
-      Serial.println("Selecciona perfil: 1=APPS_STEP, 2=OVERVOLTAGE, 3=UNDERVOLTAGE, 4=CTRL_OVERTEMP, 5=MOTOR_OVERTEMP, 6=RANDOM");
-      while (!Serial.available()) { esp_task_wdt_reset(); }
-      { int sel = Serial.parseInt();
-        if (sel >= 1 && sel <= 6) simProfile = (SimProfile)sel;
-        else simProfile = SIM_APPS_STEP;
-        Serial.print("Perfil sim: "); Serial.println((int)simProfile);
-      }
-      break;
-    case 16:
-      Serial.println("Selecciona modo: 1=CAN, 2=Directo");
-      while (!Serial.available()) { esp_task_wdt_reset(); }
-      { int sel = Serial.parseInt();
-        controlMode = (sel == 2) ? MODE_DIRECT : MODE_CAN;
-        Serial.println(controlMode == MODE_CAN ? "Modo CAN activado" : "Modo DIRECTO activado");
-      }
-      break;
-    case 17:
-      debugEnabled = !debugEnabled;
-      Serial.println(debugEnabled ? "Debug activado" : "Debug desactivado");
-      break;
-
-    case 0: Serial.println("Menú cerrado."); break;
-    default: Serial.println("Opción inválida."); break;
-  }
-
-  while (Serial.available()) Serial.read();
-  serialMenu();
 }
