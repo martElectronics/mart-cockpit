@@ -9,8 +9,7 @@
 #include <Arduino.h>
 #include <MART_CAN.h>
 #include <Mcp320x.h>
-#include <Adafruit_NeoPixel.h>
-#include "esp_task_wdt.h"
+#include <IWatchdog.h>
 #include "global.h"
 #include "PairedAnalogSensor.h"
 #include "Config.h"
@@ -32,16 +31,14 @@ constexpr uint32_t  TASK_WDT_TIMEOUT_S = cfg::TASK_WDT_TIMEOUT_S;
 constexpr uint32_t  ID_BMS_STATUS      = cfg::ID_BMS_STATUS;
 constexpr uint8_t   BMS_SDC_BIT        = cfg::BMS_SDC_BIT;
 constexpr uint32_t  BMS_WD_MS          = cfg::BMS_WD_MS;
-// Hardware (ADC / LED / SPI)
-constexpr uint16_t  ADC_VREF           = cfg::ADC_VREF;
-constexpr uint32_t  ADC_CLK            = cfg::ADC_CLK;
-constexpr uint8_t   SPI_CS             = cfg::PIN_SPI_CS;
-constexpr uint8_t   LED_PIN            = cfg::PIN_LED;
-constexpr uint8_t   LED_COUNT          = cfg::LED_COUNT;
+// Hardware (ADC / SPI)
+constexpr uint16_t  ADC_VREF       = cfg::ADC_VREF;
+constexpr uint32_t  ADC_CLK        = cfg::ADC_CLK;
+constexpr PinName   SPI_CS         = cfg::PIN_SPI_CS;
 // Pines de E/S
-constexpr uint8_t   pinStart           = cfg::PIN_START;
-constexpr uint8_t   pinBUZZ            = cfg::PIN_BUZZER;
-constexpr uint8_t   pinR2D_Digital     = cfg::PIN_R2D_DIGITAL;
+constexpr PinName   pinStart       = cfg::PIN_START;
+constexpr PinName   pinBUZZ        = cfg::PIN_BUZZER;
+constexpr PinName   pinR2D_Digital = cfg::PIN_R2D_DIGITAL;
 // IDs de comandos al inversor
 constexpr uint32_t  idCmdRPM             = cfg::ID_CMD_RPM;
 constexpr uint32_t  idCmdEN              = cfg::ID_CMD_EN;
@@ -78,7 +75,6 @@ enum SimProfile {
 // --------- Objetos hardware (definidos en main.cpp) ---------
 extern CAN_BUS CAN;
 extern MCP3208 adc;
-extern Adafruit_NeoPixel pixels;
 
 // --------- APPS ---------
 extern PairedAnalogSensorConfig appsCfg;

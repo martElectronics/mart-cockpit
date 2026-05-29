@@ -95,7 +95,7 @@ void processMenu() {
       break;
     case 15:
       Serial.println("Selecciona perfil: 1=APPS_STEP, 2=OVERVOLTAGE, 3=UNDERVOLTAGE, 4=CTRL_OVERTEMP, 5=MOTOR_OVERTEMP, 6=RANDOM");
-      while (!Serial.available()) { esp_task_wdt_reset(); }
+      while (!Serial.available()) { IWatchdog.reload(); }
       { int sel = Serial.parseInt();
         if (sel >= 1 && sel <= 6) simProfile = (SimProfile)sel;
         else simProfile = SIM_APPS_STEP;
@@ -104,7 +104,7 @@ void processMenu() {
       break;
     case 16:
       Serial.println("Selecciona modo: 1=CAN, 2=Directo");
-      while (!Serial.available()) { esp_task_wdt_reset(); }
+      while (!Serial.available()) { IWatchdog.reload(); }
       { int sel = Serial.parseInt();
         controlMode = (sel == 2) ? MODE_DIRECT : MODE_CAN;
         Serial.println(controlMode == MODE_CAN ? "Modo CAN activado" : "Modo DIRECTO activado");

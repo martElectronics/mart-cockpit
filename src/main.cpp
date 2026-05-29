@@ -8,9 +8,8 @@
 #include "Vcu.h"
 
 // ===================== HARDWARE =====================
-CAN_BUS CAN(HardwareType::Transciever, CAN_SPEED_KBPS, NODE_ID); // CAN por transceptor.
-MCP3208 adc(ADC_VREF, SPI_CS);                                   // ADC MCP3208.
-Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+CAN_BUS CAN(HardwareType::Transciever, CAN_SPEED_KBPS, NODE_ID); // CAN por FDCAN1 (PA11/PA12).
+MCP3208 adc(ADC_VREF, SPI_CS);                                   // ADC MCP3208 (SPI).
 
 // ===================== APPS =====================
 PairedAnalogSensorConfig appsCfg = buildAppsConfig();
@@ -56,14 +55,9 @@ void setup() {
   digitalWrite(pinR2D_Digital, LOW);   // Estado seguro: DriveEnable LOW al arrancar.
   // (Recomendado: pull-down hardware en pinR2D_Digital para que esté LOW durante el boot/reset.)
 
-  // Watchdog del micro: si el loop se cuelga > TASK_WDT_TIMEOUT_S, resetea (DriveEnable a LOW).
-#if defined(ESP_ARDUINO_VERSION) && (ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0))
-  esp_task_wdt_config_t wdtCfg = { .timeout_ms = TASK_WDT_TIMEOUT_S * 1000, .idle_core_mask = 0, .trigger_panic = true };
-  esp_task_wdt_init(&wdtCfg);
-#else
-  esp_task_wdt_init(TASK_WDT_TIMEOUT_S, true);
-#endif
-  esp_task_wdt_add(NULL);              // Monitoriza la tarea del loop().
+  // Watchdog del micro (IWDG del STM32): si el loop se cuelga > TASK_WDT_TIMEOUT_S,
+  // resetea -> DriveEnable a LOW. IWatchdog.begin() recibe el timeout en microsegundos.
+  IWatchdog.begin(TASK_WDT_TIMEOUT_S * 1000000UL);
 
   // Inicializa SPI para el ADC MCP3208.
   pinMode(SPI_CS, OUTPUT);
@@ -71,11 +65,6 @@ void setup() {
   SPISettings settings(ADC_CLK, MSBFIRST, SPI_MODE0);
   SPI.begin();
   SPI.beginTransaction(settings);
-
-  // Inicializa LED NeoPixel.
-  pixels.begin();
-  pixels.clear();
-  pixels.show();
 
   // La auto-calibración del APPS la hace AnalogSensor internamente por tabla de voltaje
   // (ver buildAppsConfig). Con la tabla vacía se usan los límites estáticos.
@@ -128,5 +117,5 @@ void loop() {
 
   processMenu();
 
-  esp_task_wdt_reset();   // Alimenta el watchdog del micro (si el loop se cuelga, reset -> DriveEnable LOW).
+  IWatchdog.reload();   // Alimenta el watchdog del micro (si el loop se cuelga, reset -> DriveEnable LOW).
 }

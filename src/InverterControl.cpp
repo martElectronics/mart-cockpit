@@ -149,9 +149,7 @@ void readInverterStatus() {
     else if (stsInverterCAN_DriveEnable == 0) Serial.println("Drive enable FAIL");
     else                                      Serial.println("Drive enable UNKNOWN");
 
-    if (stsInverterCAN_FaultCode != 0) pixels.setPixelColor(0, pixels.Color(255, 0, 0));
-    else pixels.setPixelColor(0, pixels.Color(0, 0, 0));
-    pixels.show();
+    // (Indicador LED retirado en STM32; el AMS/rojo lo gestiona el HW del SDC.)
 
     tAux = millis();
   }
