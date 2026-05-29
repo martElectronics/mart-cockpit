@@ -5,6 +5,7 @@
 #include "global.h"               // Archivo propio del proyecto (probablemente define estructuras y constantes).
 #include <Mcp320x.h>              // Librería para ADC MCP3208 (conversor analógico-digital de 12 bits).
 #include <Adafruit_NeoPixel.h>    // Librería para controlar LEDs RGB tipo NeoPixel.
+#include "PairedAnalogSensor.h"   // Par de sensores APPS: filtrado, escalado, plausibilidad y autocalibración.
 
 // ===================== CONSTANTES =====================
 #define CAN_SPEED_KBPS 125        // Velocidad del bus CAN en kbps (125 kbps).
@@ -17,15 +18,19 @@
 #define INVERTER_WD_MS 1000       // Tiempo de watchdog para comunicación con el inversor (ms).
 #define BUZZER_ON_MS 2000         // Tiempo que suena el buzzer al activar R2D (ms).
 
+// --- BMS por CAN (bms_master_26, rama testing) ---
+#define ID_BMS_STATUS 10          // ID 10 (0x0A): Estado general del BMS. DLC 1, ~800 ms.
+#define BMS_SDC_BIT   2           // BMS_SDC = byte 0, bit 2 (SDC presente). Confirmado con bms_master_26.
+#define BMS_WD_MS     2500        // Sin trama del BMS en este tiempo -> SDC se considera NO presente (fail-safe). ID 10 llega cada ~800 ms.
+
 #define UNUSED_BYTE  0xFF         // Valor especial para indicar "no usado" en arrays tipo byte.
 #define UNUSED_SHORT ((int16_t)0x7FFF) // Valor especial para "no usado" en arrays tipo short (32767).
 #define UNUSED_INT32 0xFFFFFFFF   // Valor especial para "no usado" en arrays tipo int32_t.
 
 // ===================== PROTOTIPOS =====================
 // Declaraciones de funciones para que el compilador las conozca antes de usarlas.
-void configureAPPS();
-bool R2D(bool tson, bool start, bool brake);
-int apps(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc);
+PairedAnalogSensorConfig buildAppsConfig();
+bool R2D(bool sdc, bool start, bool brake);
 
 void guardarEEPROM(int direccion, int valor);
 int leerEEPROM(int direccion);
@@ -60,15 +65,19 @@ int pinTSON = 21, pinStart = 15, pinBUZZ = 8, pinTSON_EXT = 9, pinSDC = 16, pinR
 
 // ===================== CONFIGURACIONES =====================
 // Variables de estado y configuración del sistema.
-struct sensorData apps1Data, apps2Data; // Datos de los dos sensores APPS (pedal acelerador).
-bool stsTSON, stsStart, stsR2D, stsAPPS; // Estados de TSON, Start, Ready-to-Drive y APPS.
+PairedAnalogSensorConfig appsCfg = buildAppsConfig();  // Configuración del par APPS (definición más abajo).
+PairedAnalogSensor appsSensor(appsCfg);                // Par de sensores APPS: filtrado + plausibilidad + autocal.
+uint16_t rawApps1 = 0, rawApps2 = 0;                   // Lecturas crudas de APPS1/APPS2 (ADC o simuladas).
+SensorState appsState = SensorState::NORMAL;           // Estado de plausibilidad del par APPS.
+bool stsStart, stsR2D;                   // Estados de Start y Ready-to-Drive. (TSON: próxima iteración de PCB)
+bool stsSDC = false;                     // SDC (shutdown circuit) recibido del BMS por CAN (ID 10, byte 0, bit 2).
 int stsBrake, stsBrake2, stsVbatRAW;     // Lecturas de freno y voltaje de batería.
+byte canBMSStatus[1];                    // Buffer de recepción del estado del BMS (ID 10).
 uint32_t lastInverterMsg = 0;            // Timestamp del último mensaje recibido del inversor.
+uint32_t lastBMSMsg = 0;                 // Timestamp de la última trama de estado del BMS (para watchdog SDC).
 uint32_t lastDebug = 0;                  // Timestamp del último debug enviado por serie.
 
 int cfgBrakeTH = 550;                    // Umbral de freno (valor ADC).
-int cfgAPPSdiff = 100;                   // Diferencia máxima permitida entre APPS1 y APPS2.
-int cfgAPPSdesc = 100;                   // Valor mínimo para detectar desconexión de APPS.
 
 int cfgCurrentACMAX = 190;               // Corriente AC máxima (Apk).
 int cfgCurrentDCMAX = 60;                // Corriente DC máxima (Adc).
@@ -129,16 +138,39 @@ uint32_t simStepT = 0;           // Timestamp auxiliar para pasos de simulación
 int simAppsProgress = 0;         // Progreso de simulación de APPS.
 
 // ===================== FUNCIONES AUX =====================
-// Configuración inicial de los sensores APPS (valores de calibración).
-void configureAPPS() {
-  apps1Data.valAnalogUP   = 1055; // Valor ADC cuando APPS1 está en reposo.
-  apps1Data.valAnalogDOWN = 1935; // Valor ADC cuando APPS1 está a fondo.
-  apps2Data.valAnalogUP   = 2290; // Valor ADC cuando APPS2 está en reposo.
-  apps2Data.valAnalogDOWN = 2068; // Valor ADC cuando APPS2 está a fondo.
-  apps1Data.valScaledUP = apps2Data.valScaledUP = 0;     // Escalado mínimo.
-  apps1Data.valScaledDOWN = apps2Data.valScaledDOWN = 1000; // Escalado máximo.
+// Construye la configuración del par APPS (calibración, escalado, filtrado, plausibilidad).
+PairedAnalogSensorConfig buildAppsConfig() {
+  PairedAnalogSensorConfig c;
+  // APPS1 (normal: el ADC sube con el pedal). Reposo 1055 -> Fondo 1935.
+  c.cfgSensor1.cfgAdcMinNormal    = 1055;
+  c.cfgSensor1.cfgAdcMaxNormal    = 1935;
+  c.cfgSensor1.cfgScaledOutputMin = 0;
+  c.cfgSensor1.cfgScaledOutputMax = 1000;
+  c.cfgSensor1.cfgFilterType      = FilterType::EWMA;
+  c.cfgSensor1.cfgFilterAlpha     = 0.2;
+  // APPS2 (INVERSO: el ADC baja con el pedal). Reposo 2290 -> Fondo 2068.
+  c.cfgSensor2.cfgAdcMinNormal    = 2290;
+  c.cfgSensor2.cfgAdcMaxNormal    = 2068;
+  c.cfgSensor2.cfgScaledOutputMin = 0;
+  c.cfgSensor2.cfgScaledOutputMax = 1000;
+  c.cfgSensor2.cfgFilterType      = FilterType::EWMA;
+  c.cfgSensor2.cfgFilterAlpha     = 0.2;
+  // Coherencia del par: implausible si difieren >10% durante >100 ms (FSAE T.4.2.4).
+  c.cfgMaxDeviationPercent = 10.0;
+  c.cfgDeviationTimeout    = 100;
+  return c;
 }
-bool R2D(bool tson, bool start, bool brake) {
+
+// Promedia N lecturas de un canal del MCP3208 (usado en la autocalibración).
+static uint16_t averageAdc(MCP3208::Channel ch, int n) {
+  uint32_t acc = 0;
+  for (int i = 0; i < n; ++i) { acc += adc.read(ch); delayMicroseconds(200); }
+  return (uint16_t)(acc / n);
+}
+// Precondición: SDC presente (recibido del BMS por CAN). Con el SDC activo, al pulsar
+// Start con el freno pisado -> Ready-to-Drive (con buzzer). Si el SDC cae en cualquier
+// momento, vuelve a reposo. (TSON se añadirá en la próxima iteración de PCB.)
+bool R2D(bool sdc, bool start, bool brake) {
   static int step = 0;                  // Estado interno de la máquina de estados (0=idle, 10=espera, 20=activo).
   static uint32_t tAux = millis();      // Marca de tiempo para controlar el buzzer.
   bool r2d = false;                     // Valor de salida: indica si el sistema está en Ready-to-Drive.
@@ -147,12 +179,12 @@ bool R2D(bool tson, bool start, bool brake) {
   if ((millis() - tAux) >= BUZZER_ON_MS) digitalWrite(pinBUZZ, false);
 
   switch (step) {
-    case 0:                             // Estado inicial: espera a que TSON esté activo.
-      if (tson) step = 10;
+    case 0:                             // Estado inicial: espera a que el SDC esté presente.
+      if (sdc) step = 10;
       break;
 
-    case 10:                            // Estado de espera: requiere que TSON siga activo.
-      if (!tson) step = 0;              // Si TSON se desactiva, vuelve a estado inicial.
+    case 10:                            // Estado de espera: requiere que el SDC siga presente.
+      if (!sdc) step = 0;               // Si el SDC se cae, vuelve a estado inicial.
       else if (start && brake) {        // Si se pulsa Start y el freno está presionado:
         tAux = millis();                // Guarda tiempo actual.
         digitalWrite(pinBUZZ, true);    // Activa buzzer.
@@ -161,21 +193,13 @@ bool R2D(bool tson, bool start, bool brake) {
       break;
 
     case 20:                            // Estado activo: Ready-to-Drive.
-      if (!tson) step = 0;              // Si TSON se desactiva, vuelve a estado inicial.
+      if (!sdc) step = 0;               // Si el SDC se cae, vuelve a estado inicial.
       r2d = true;                       // Señal de salida: sistema listo para conducir.
       break;
   }
   return r2d;
 }
 
-
-int apps(int valAPPS1, int valAPPS2, int difMAX, int max, int valDesc) {
-  int val = abs(valAPPS1 - valAPPS2);   // Diferencia entre los dos sensores APPS.
-
-  if ((valAPPS1 <= valDesc) || (valAPPS2 <= valDesc)) return -1; // Si alguno está por debajo del umbral → desconectado.
-  else if (val >= difMAX) return 1;     // Si la diferencia entre ambos supera el máximo permitido → implausible.
-  else return 0;                        // Si todo está correcto → OK.
-}
 
 // ===================== EEPROM =====================
 void guardarEEPROM(int direccion, int valor) { EEPROM.put(direccion, valor); }
@@ -189,6 +213,7 @@ void setup() {
   Serial.begin(115200);                 // Inicializa puerto serie para debug.                
   lastDebug = millis();                 // Marca de tiempo inicial para debug.
   lastInverterMsg = millis();           // Marca de tiempo inicial para watchdog CAN.
+  lastBMSMsg = millis();                // Marca de tiempo inicial para watchdog del BMS (SDC).
 
   // Configuración de pines.
   pinMode(pinStart, INPUT_PULLUP);
@@ -216,8 +241,15 @@ void setup() {
   pixels.clear();
   pixels.show();
 
-  // Configura sensores APPS y aplica configuraciones al inversor.
-  configureAPPS();
+  // Autocalibración del reposo del APPS (se asume pedal suelto al conectar la batería).
+  // La guarda interna rechaza la calibración si la lectura está en corto o fuera de banda.
+  {
+    uint16_t a1 = averageAdc(MCP3208::Channel::SINGLE_2, 64);
+    uint16_t a2 = averageAdc(MCP3208::Channel::SINGLE_3, 64);
+    bool calOk = appsSensor.calibrateRest(a1, a2);
+    Serial.printf("Autocal APPS reposo: %s (A1=%u A2=%u)\n",
+                  calOk ? "OK" : "RECHAZADA (fuera de banda)", a1, a2);
+  }
   aplicarConfiguraciones();
 
   CAN.config.simulating = false;        // Desactiva simulación por defecto.
@@ -232,12 +264,24 @@ void loop() {
     runSimulation();
   } else {
     CAN.receive();
+
+    // SDC desde el BMS por CAN (ID 10, byte 0, bit 2). Independiente del modo de control.
+    if (CAN.getPacket(ID_BMS_STATUS, canBMSStatus, 1)) {
+      lastBMSMsg = millis();
+      stsSDC = (canBMSStatus[0] >> BMS_SDC_BIT) & 0x01;
+    }
+    if ((millis() - lastBMSMsg) > BMS_WD_MS) {
+      stsSDC = false;   // fail-safe: sin tramas del BMS, el SDC no se considera presente
+    }
+
     if (controlMode == MODE_CAN) {
       if (CAN.getPacket(id2StsInverter, stsInverterCAN_22_FULL, 8) ||
           CAN.getPacket(id4StsInverter, stsInverterCAN_24_FULL, 8)) {
         lastInverterMsg = millis();
       }
     }
+    rawApps1   = adc.read(MCP3208::Channel::SINGLE_2);
+    rawApps2   = adc.read(MCP3208::Channel::SINGLE_3);
     stsBrake   = adc.read(MCP3208::Channel::SINGLE_4);
     stsBrake2  = adc.read(MCP3208::Channel::SINGLE_5);
     stsVbatRAW = adc.read(MCP3208::Channel::SINGLE_6);
@@ -260,14 +304,16 @@ void loop() {
 
 // ===================== SIMULACIÓN =====================
 void runSimulation() {
+  stsSDC = true;        // En simulación damos el SDC por presente para poder probar el R2D.
+  lastBMSMsg = millis();
   switch (simProfile) {
     case SIM_APPS_STEP:
       if (millis() - simStepT > 50) {
         simStepT = millis();
         simAppsProgress = min(simAppsProgress + 10, 1000);
       }
-      apps1Data.valAnalog = map(simAppsProgress, 0, 1000, 1100, 1900);
-      apps2Data.valAnalog = map(simAppsProgress, 0, 1000, 2300, 2050);
+      rawApps1 = map(simAppsProgress, 0, 1000, 1100, 1900);
+      rawApps2 = map(simAppsProgress, 0, 1000, 2300, 2050);
       stsBrake = 300; stsBrake2 = 300; stsVbatRAW = 360;
       { short fakeTempsOK[4] = {350, 280, 0, (short)UNUSED_SHORT};
         CAN.setPacket(id2StsInverter, fakeTempsOK, 4);
@@ -286,8 +332,8 @@ void runSimulation() {
       else if (simProfile == SIM_FAULT_CTRL_OVERTEMP)faultCode = 5;
       else if (simProfile == SIM_FAULT_MOTOR_OVERTEMP)faultCode = 6;
 
-      apps1Data.valAnalog = 1600;
-      apps2Data.valAnalog = 2150;
+      rawApps1 = 1600;
+      rawApps2 = 2150;
       stsBrake = 300; stsBrake2 = 300; stsVbatRAW = 360;
 
       short fakeTempsFail[4] = {400, 350, (short)faultCode, (short)UNUSED_SHORT};
@@ -300,8 +346,8 @@ void runSimulation() {
 
     case SIM_RANDOM:
     default:
-      apps1Data.valAnalog = random(1000, 2000);
-      apps2Data.valAnalog = random(1000, 2000);
+      rawApps1 = random(1000, 2000);
+      rawApps2 = random(1000, 2000);
       stsBrake   = random(200, 800);
       stsBrake2  = random(200, 800);
       stsVbatRAW = random(300, 400);
@@ -317,21 +363,24 @@ void runSimulation() {
 // ===================== CONTROL INVERSOR =====================
 void controlInverter() {
   stsStart = !digitalRead(pinStart);
-  stsTSON  = digitalRead(pinTSON);
+  // stsSDC se actualiza en loop() desde el BMS por CAN (ya no se lee TSON por GPIO).
 
-  apps1Data.valScaled = map(apps1Data.valAnalog, apps1Data.valAnalogUP, apps1Data.valAnalogDOWN, 0, 1000);
-  apps2Data.valScaled = map(apps2Data.valAnalog, apps2Data.valAnalogUP, apps2Data.valAnalogDOWN, 0, 1000);
+  // Procesa el par APPS: filtra, escala (0..1000) y detecta implausibilidad
+  // (corto a GND/VCC, fuera de rango y desviación >10% entre ambos durante >100 ms).
+  float appsMeanF, appsMeanS, appsSensF, appsSensS;
+  appsSensor.update(rawApps1, rawApps2, appsMeanF, appsMeanS, appsSensF, appsSensS, appsState);
+  bool appsOk = (appsState == SensorState::NORMAL);
+  int  appsThrottle = (int)appsMeanS;   // Consigna 0..1000 (la clase ya devuelve 0 si hay implausibilidad).
 
-  stsAPPS = apps(apps1Data.valScaled, apps2Data.valScaled, cfgAPPSdiff, 0, cfgAPPSdesc);
-  stsR2D  = R2D(stsTSON, stsStart, (stsBrake2 >= cfgBrakeTH));
+  stsR2D  = R2D(stsSDC, stsStart, (stsBrake2 >= cfgBrakeTH));
   digitalWrite(pinR2D_Digital, stsR2D ? HIGH : LOW);
 
-  if (stsR2D && stsAPPS == 0) {
+  if (stsR2D && appsOk) {
     if (controlMode == MODE_CAN) {
       cmdDataDriveEN[0] = 1;
       CAN.setPacket(idCmdEN, cmdDataDriveEN, 1);
 
-      int currentTarget = apps2Data.valScaled;
+      int currentTarget = appsThrottle;
       cmdDataCurrent[0]      = (int16_t)currentTarget;
       cmdDataCurrentACMax[0] = (int16_t)(cfgCurrentACMAX * 10);
       cmdDataCurrentDCMax[0] = (int16_t)(cfgCurrentDCMAX * 10);
@@ -339,7 +388,7 @@ void controlInverter() {
       CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
       CAN.setPacket(idCmdSetMaxDCCurrent, cmdDataCurrentDCMax, 4);
 
-      cmdDataRPM[0] = map(apps1Data.valScaled, 0, 1000, 0, cfgRPMax * 10);
+      cmdDataRPM[0] = map(appsThrottle, 0, 1000, 0, cfgRPMax * 10);
       CAN.setPacket(idCmdRPM, cmdDataRPM, 2);
 
     } else {
@@ -359,10 +408,10 @@ void controlInverter() {
   }
 
   // Publicación de estados VCU
-  CANAppsState[0] = apps1Data.valScaled;
-  CANAppsState[1] = apps2Data.valScaled;
-  CANAppsState[2] = apps1Data.valAnalog;
-  CANAppsState[3] = apps2Data.valAnalog;
+  CANAppsState[0] = (uint16_t)appsSensor.getSensor1().getScaledValue();
+  CANAppsState[1] = (uint16_t)appsSensor.getSensor2().getScaledValue();
+  CANAppsState[2] = rawApps1;
+  CANAppsState[3] = rawApps2;
 
   CANBrakeState[0] = 0;
   CANBrakeState[1] = 0;
@@ -370,7 +419,7 @@ void controlInverter() {
   CANBrakeState[3] = stsBrake2;
 
   CANVCUSignals[0] = (uint8_t)stsVbatRAW;
-  CANVCUSignals[1] = (uint8_t)stsTSON;
+  CANVCUSignals[1] = (uint8_t)stsSDC;
   CANVCUSignals[2] = (uint8_t)stsStart;
   CANVCUSignals[6] = (uint8_t)stsR2D;
 
@@ -432,17 +481,20 @@ void debug() {
   Serial.print("Mode: "); Serial.println(controlMode == MODE_CAN ? "CAN" : "DIRECT");
   Serial.print("R2D: "); Serial.print(stsR2D ? "ON" : "OFF");
   Serial.print(" | APPS status: ");
-  if (stsAPPS == 0) Serial.print("OK");
-  else if (stsAPPS == 1) Serial.print("DIF (implausible)");
-  else if (stsAPPS == -1) Serial.print("DESC (desconectado)");
-  else Serial.print("UNKNOWN");
-  Serial.print(" | TSON: "); Serial.print(stsTSON);
+  switch (appsState) {
+    case SensorState::NORMAL:         Serial.print("OK"); break;
+    case SensorState::PENDING:        Serial.print("PENDING"); break;
+    case SensorState::IMPLAUSIBILITY: Serial.print("IMPLAUSIBLE"); break;
+  }
+  Serial.print(" | SDC: "); Serial.print(stsSDC);
+  Serial.print(" (BMS age "); Serial.print(millis() - lastBMSMsg); Serial.print(" ms)");
   Serial.print(" | START: "); Serial.println(stsStart);
 
-  Serial.print("APPS1 analog: "); Serial.print(apps1Data.valAnalog);
-  Serial.print(" | scaled: ");   Serial.println(apps1Data.valScaled);
-  Serial.print("APPS2 analog: "); Serial.print(apps2Data.valAnalog);
-  Serial.print(" | scaled: ");    Serial.println(apps2Data.valScaled);
+  Serial.print("APPS1 analog: "); Serial.print(appsSensor.getSensor1().getRawValue());
+  Serial.print(" | scaled: ");   Serial.println(appsSensor.getSensor1().getScaledValue());
+  Serial.print("APPS2 analog: "); Serial.print(appsSensor.getSensor2().getRawValue());
+  Serial.print(" | scaled: ");    Serial.println(appsSensor.getSensor2().getScaledValue());
+  Serial.print("APPS throttle (media): "); Serial.println(appsSensor.getMeanScaledValue());
 
   Serial.print("Brake1: "); Serial.print(stsBrake);
   Serial.print(" | Brake2: "); Serial.println(stsBrake2);
@@ -480,6 +532,7 @@ void serialMenu() {
   Serial.println("15. Seleccionar perfil de simulación");
   Serial.println("16. Seleccionar modo de control (CAN / DIRECTO)");
   Serial.println("17. Activar/Desactivar debug");
+  Serial.println("18. Calibrar APPS a FONDO (pisa el pedal a tope)");
   Serial.println("0. Salir del menú");
   Serial.print("Opción: ");
 }
@@ -546,6 +599,16 @@ void processMenu() {
       debugEnabled = !debugEnabled;
       Serial.println(debugEnabled ? "Debug activado" : "Debug desactivado");
       break;
+    case 18: {
+      Serial.println("Pisa el pedal a FONDO y manda cualquier tecla para capturar...");
+      while (!Serial.available()) {}
+      uint16_t a1 = averageAdc(MCP3208::Channel::SINGLE_2, 64);
+      uint16_t a2 = averageAdc(MCP3208::Channel::SINGLE_3, 64);
+      bool ok = appsSensor.calibrateFull(a1, a2);
+      Serial.printf("Calib APPS fondo: %s (A1=%u A2=%u)\n",
+                    ok ? "OK" : "RECHAZADA (fuera de banda)", a1, a2);
+      break;
+    }
 
     case 0: Serial.println("Menú cerrado."); break;
     default: Serial.println("Opción inválida."); break;
