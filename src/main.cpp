@@ -6,25 +6,55 @@
 #include <Adafruit_NeoPixel.h>    // Librería para controlar LEDs RGB tipo NeoPixel.
 #include "PairedAnalogSensor.h"   // Par de sensores APPS: filtrado, escalado, plausibilidad y autocalibración.
 #include "esp_task_wdt.h"         // Watchdog de tarea del ESP32 (resetea el micro si el loop se cuelga).
+#include "Config.h"               // Parametrización centralizada (namespace cfg).
 
-// ===================== CONSTANTES =====================
-#define CAN_SPEED_KBPS 125        // Velocidad del bus CAN en kbps (125 kbps).
-#define NODE_ID 1                 // ID del nodo en la red CAN (para direccionamiento).
-#define DEBUG_PERIOD_MS 500       // Periodo de refresco del debug por puerto serie (ms).
-#define INVERTER_WD_MS 1000       // Tiempo de watchdog para comunicación con el inversor (ms).
-#define BUZZER_ON_MS 2000         // Tiempo que suena el buzzer al activar R2D (ms).
-#define TASK_WDT_TIMEOUT_S 2      // Timeout del watchdog del micro: resetea si el loop no responde en este tiempo.
-// NOTA: no se usa EEPROM. El ESP32-S3 no tiene EEPROM real (se emularía en flash);
-// si en el futuro hace falta persistencia, usar Preferences (NVS), no EEPROM.
+// ===================== CONSTANTES (alias de include/Config.h) =====================
+// Toda la parametrización vive en include/Config.h (namespace cfg). Aquí se exponen
+// con los nombres usados en este archivo. (EEPROM eliminada: el ESP32-S3 no tiene
+// EEPROM real; usar Preferences/NVS si hiciera falta persistencia.)
+#define UNUSED_BYTE  0xFF
+#define UNUSED_SHORT ((int16_t)0x7FFF)
+#define UNUSED_INT32 0xFFFFFFFF
 
-// --- BMS por CAN (bms_master_26, rama testing) ---
-#define ID_BMS_STATUS 10          // ID 10 (0x0A): Estado general del BMS. DLC 1, ~800 ms.
-#define BMS_SDC_BIT   2           // BMS_SDC = byte 0, bit 2 (SDC presente). Confirmado con bms_master_26.
-#define BMS_WD_MS     2500        // Sin trama del BMS en este tiempo -> SDC se considera NO presente (fail-safe). ID 10 llega cada ~800 ms.
-
-#define UNUSED_BYTE  0xFF         // Valor especial para indicar "no usado" en arrays tipo byte.
-#define UNUSED_SHORT ((int16_t)0x7FFF) // Valor especial para "no usado" en arrays tipo short (32767).
-#define UNUSED_INT32 0xFFFFFFFF   // Valor especial para "no usado" en arrays tipo int32_t.
+// CAN / nodo / tiempos
+constexpr unsigned  CAN_SPEED_KBPS     = cfg::CAN_SPEED_KBPS;
+constexpr int       NODE_ID            = cfg::NODE_ID;
+constexpr uint32_t  DEBUG_PERIOD_MS    = cfg::DEBUG_PERIOD_MS;
+constexpr uint32_t  INVERTER_WD_MS     = cfg::INVERTER_WD_MS;
+constexpr uint32_t  BUZZER_ON_MS       = cfg::BUZZER_ON_MS;
+constexpr uint32_t  TASK_WDT_TIMEOUT_S = cfg::TASK_WDT_TIMEOUT_S;
+// BMS por CAN
+constexpr uint32_t  ID_BMS_STATUS      = cfg::ID_BMS_STATUS;
+constexpr uint8_t   BMS_SDC_BIT        = cfg::BMS_SDC_BIT;
+constexpr uint32_t  BMS_WD_MS          = cfg::BMS_WD_MS;
+// Hardware (ADC / LED / SPI)
+constexpr uint16_t  ADC_VREF           = cfg::ADC_VREF;
+constexpr uint32_t  ADC_CLK            = cfg::ADC_CLK;
+constexpr uint8_t   SPI_CS             = cfg::PIN_SPI_CS;
+constexpr uint8_t   LED_PIN            = cfg::PIN_LED;
+constexpr uint8_t   LED_COUNT          = cfg::LED_COUNT;
+// Pines de E/S
+constexpr uint8_t   pinStart           = cfg::PIN_START;
+constexpr uint8_t   pinBUZZ            = cfg::PIN_BUZZER;
+constexpr uint8_t   pinR2D_Digital     = cfg::PIN_R2D_DIGITAL;
+// IDs de comandos al inversor
+constexpr uint32_t  idCmdRPM             = cfg::ID_CMD_RPM;
+constexpr uint32_t  idCmdEN              = cfg::ID_CMD_EN;
+constexpr uint32_t  idCmdCurrentPCTG     = cfg::ID_CMD_CURRENT_PCTG;
+constexpr uint32_t  idCmdSetMaxACCurrent = cfg::ID_CMD_SET_MAX_AC;
+constexpr uint32_t  idCmdSetMaxDCCurrent = cfg::ID_CMD_SET_MAX_DC;
+// IDs de estado del inversor
+constexpr uint32_t  id2StsInverter       = cfg::ID_STS_INV_2;
+constexpr uint32_t  id4StsInverter       = cfg::ID_STS_INV_4;
+// IDs de telemetría publicada por la VCU
+constexpr unsigned long idAPPSState  = cfg::ID_APPS_STATE;
+constexpr unsigned long idBrakeState = cfg::ID_BRAKE_STATE;
+constexpr unsigned long idVCUSignals = cfg::ID_VCU_SIGNALS;
+// Límites de control
+constexpr int  cfgBrakeTH      = cfg::BRAKE_TH;
+constexpr int  cfgCurrentACMAX = cfg::CURRENT_AC_MAX;
+constexpr int  cfgCurrentDCMAX = cfg::CURRENT_DC_MAX;
+constexpr int  cfgRPMax        = cfg::RPM_MAX;
 
 // ===================== PROTOTIPOS =====================
 // Declaraciones de funciones para que el compilador las conozca antes de usarlas.
@@ -41,19 +71,9 @@ void serialMenu();
 void processMenu();
 
 // ===================== HARDWARE =====================
-#define LED_PIN 48                // Pin donde está conectado el LED NeoPixel.
-#define LED_COUNT 1               // Número de LEDs NeoPixel.
-#define SPI_CS 10                 // Pin de chip select para el ADC MCP3208.
-#define ADC_VREF 3300             // Voltaje de referencia del ADC (mV).
-#define ADC_CLK 160000            // Frecuencia de reloj SPI para el ADC.
-
 CAN_BUS CAN(HardwareType::Transciever, CAN_SPEED_KBPS, NODE_ID); // Objeto CAN con transceptor, velocidad y ID.
 MCP3208 adc(ADC_VREF, SPI_CS);                                   // Objeto ADC MCP3208.
 Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800); // Objeto para controlar el LED RGB.
-
-// GPIOs confirmados (pines físicos del ESP32 asignados a señales del coche).
-// (TSON y SDC ya no se leen por GPIO: SDC llega por CAN, TSON queda para la próxima PCB.)
-int pinStart = 15, pinBUZZ = 8, pinR2D_Digital = 2;
 
 // ===================== CONFIGURACIONES =====================
 // Variables de estado y configuración del sistema.
@@ -69,35 +89,10 @@ uint32_t lastInverterMsg = 0;            // Timestamp del último mensaje recibi
 uint32_t lastBMSMsg = 0;                 // Timestamp de la última trama de estado del BMS (para watchdog SDC).
 uint32_t lastDebug = 0;                  // Timestamp del último debug enviado por serie.
 
-int cfgBrakeTH = 550;                    // Umbral de freno (valor ADC).
-
-int cfgCurrentACMAX = 190;               // Corriente AC máxima (Apk).
-int cfgCurrentDCMAX = 60;                // Corriente DC máxima (Adc).
-int cfgRPMax        = 1500;              // RPM máximo (ERPM target).
-
 bool debugEnabled = false;   // Por defecto, debug desactivado
 
 
-// ===================== IDS CAN =====================
-// Identificadores CAN para comandos y estados del inversor.
-uint32_t idCmdRPM             = combineInts(0x1C, NODE_ID);
-uint32_t idCmdEN              = combineInts(0x24, NODE_ID);
-uint32_t idCmdCurrentPCTG     = combineInts(0x1E, NODE_ID);
-uint32_t idCmdSetMaxACCurrent = combineInts(0x20, NODE_ID);
-uint32_t idCmdSetMaxDCCurrent = combineInts(0x22, NODE_ID);
-
-uint32_t id0StsInverter = combineInts(0x00, NODE_ID);
-uint32_t id1StsInverter = combineInts(0x01, NODE_ID);
-uint32_t id2StsInverter = combineInts(0x02, NODE_ID);
-uint32_t id3StsInverter = combineInts(0x03, NODE_ID);
-uint32_t id4StsInverter = combineInts(0x04, NODE_ID);
-
 // ===================== ESTADOS VCU =====================
-// Identificadores CAN para publicar estados de la VCU.
-unsigned long int idAPPSState  = 1163;
-unsigned long int idBrakeState = 1164;
-unsigned long int idVCUSignals = 1166;
-
 uint16_t CANAppsState[4];   // Buffer para enviar estado de APPS.
 uint16_t CANBrakeState[4];  // Buffer para enviar estado de freno.
 uint8_t  CANVCUSignals[8];  // Buffer para enviar señales de la VCU.

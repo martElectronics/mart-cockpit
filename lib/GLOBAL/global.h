@@ -151,12 +151,10 @@ inline void intToByteArray(int a, byte *byteArray)
   byteArray[1] = (a >> 8) & 0xFF;
   byteArray[0] = a & 0xFF;
 }
-// Function to combine two integers into an unsigned long int
-inline uint32_t combineInts(uint32_t int1, uint32_t int2)
+// Function to combine two integers into an unsigned long int (PID<<5 | NodeID).
+constexpr uint32_t combineInts(uint32_t int1, uint32_t int2)
 {
   return (static_cast<uint32_t>(int1) << 5) + int2;
-  // unsigned long finalID = (PID << 8) | NodeID;
-  // return finalID;
 }
 
 // Function to print an unsigned long int in hexadecimal format
