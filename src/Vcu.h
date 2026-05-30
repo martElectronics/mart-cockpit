@@ -31,14 +31,17 @@ constexpr uint32_t  TASK_WDT_TIMEOUT_S = cfg::TASK_WDT_TIMEOUT_S;
 constexpr uint32_t  ID_BMS_STATUS      = cfg::ID_BMS_STATUS;
 constexpr uint8_t   BMS_SDC_BIT        = cfg::BMS_SDC_BIT;
 constexpr uint32_t  BMS_WD_MS          = cfg::BMS_WD_MS;
-// Hardware (ADC / SPI)
+// Hardware (ADC / SPI2). Números de pin Arduino del variant.
 constexpr uint16_t  ADC_VREF       = cfg::ADC_VREF;
 constexpr uint32_t  ADC_CLK        = cfg::ADC_CLK;
-constexpr PinName   SPI_CS         = cfg::PIN_SPI_CS;
+constexpr uint8_t   SPI_CS         = cfg::PIN_ADC_CS;
+constexpr uint8_t   adcSck         = cfg::PIN_ADC_SCK;
+constexpr uint8_t   adcMiso        = cfg::PIN_ADC_MISO;
+constexpr uint8_t   adcMosi        = cfg::PIN_ADC_MOSI;
 // Pines de E/S
-constexpr PinName   pinStart       = cfg::PIN_START;
-constexpr PinName   pinBUZZ        = cfg::PIN_BUZZER;
-constexpr PinName   pinR2D_Digital = cfg::PIN_R2D_DIGITAL;
+constexpr uint8_t   pinStart       = cfg::PIN_START;
+constexpr uint8_t   pinBUZZ        = cfg::PIN_BUZZER;
+constexpr uint8_t   pinR2D_Digital = cfg::PIN_R2D_DIGITAL;
 // IDs de comandos al inversor
 constexpr uint32_t  idCmdRPM             = cfg::ID_CMD_RPM;
 constexpr uint32_t  idCmdEN              = cfg::ID_CMD_EN;

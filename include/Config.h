@@ -14,14 +14,20 @@ namespace cfg {
 constexpr unsigned CAN_SPEED_KBPS = 125;   // Velocidad del bus CAN (kbps).
 constexpr int      NODE_ID        = 1;     // ID/perfil de nodo de la VCU.
 
-// --- Pines (STM32G474RE / NUCLEO-G474RE) ---
-// TODO: PROVISIONALES (Nucleo). Confirmar contra el pinout real del VCU.
-// CAN va fijo en PA11/PA12 (lo configura MART_CAN, no hace falta declararlo aquí).
-// Los canales del MCP3208 (abajo) son del chip externo, no pines del STM32.
-constexpr PinName PIN_START       = PC_13;  // Pulsador Start (botón azul del Nucleo, INPUT_PULLUP).
-constexpr PinName PIN_BUZZER      = PB_8;   // Buzzer R2D.
-constexpr PinName PIN_R2D_DIGITAL = PA_9;   // DriveEnable digital hacia el inversor.
-constexpr PinName PIN_SPI_CS      = PB_6;   // Chip-select del ADC MCP3208 (SPI1 por defecto: SCK/MISO/MOSI del header).
+// --- Pines (STM32G474RE / NUCLEO-G474RE) — pinout real del VCU ---
+// Se usan los MACROS de pin Arduino del variant (PB7, PC8...) = números de pin, para
+// que valgan en pinMode/digitalWrite, en la librería MCP3208 (CS uint8_t) y en SPIClass.
+// (Los PinName 'PX_n' solo valen en pinMode/digitalWrite por sobrecarga, NO en librerías.)
+// CAN va fijo en PA11/PA12 (RX/TX), lo configura MART_CAN; no se declara aquí.
+constexpr uint8_t PIN_START       = PB7;   // Pulsador Start (INPUT_PULLUP, activo a 0).
+constexpr uint8_t PIN_BUZZER      = PC8;   // Buzzer R2D.
+constexpr uint8_t PIN_R2D_DIGITAL = PC6;   // DriveEnable digital hacia el inversor.
+// ADC MCP3208 por SPI2 (CS PB12, CLK PB13, DOUT->MISO PB14, DIN->MOSI PB15).
+// (Nombres PIN_ADC_* para no chocar con los macros PIN_SPI_* del framework STM32duino.)
+constexpr uint8_t PIN_ADC_CS   = PB12;
+constexpr uint8_t PIN_ADC_SCK  = PB13;
+constexpr uint8_t PIN_ADC_MISO = PB14;  // DOUT del ADC -> MISO del MCU.
+constexpr uint8_t PIN_ADC_MOSI = PB15;  // DIN del ADC  -> MOSI del MCU.
 
 // --- ADC MCP3208 ---
 constexpr uint16_t ADC_VREF = 3300;        // Vref del ADC (mV).

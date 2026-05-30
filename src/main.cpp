@@ -9,7 +9,8 @@
 
 // ===================== HARDWARE =====================
 CAN_BUS CAN(HardwareType::Transciever, CAN_SPEED_KBPS, NODE_ID); // CAN por FDCAN1 (PA11/PA12).
-MCP3208 adc(ADC_VREF, SPI_CS);                                   // ADC MCP3208 (SPI).
+SPIClass SPI_2(adcMosi, adcMiso, adcSck);                        // Bus SPI2 del ADC (DIN PB15 / DOUT PB14 / CLK PB13).
+MCP3208 adc(ADC_VREF, SPI_CS, &SPI_2);                           // ADC MCP3208 sobre SPI2.
 
 // ===================== APPS =====================
 PairedAnalogSensorConfig appsCfg = buildAppsConfig();
@@ -63,8 +64,8 @@ void setup() {
   pinMode(SPI_CS, OUTPUT);
   digitalWrite(SPI_CS, HIGH);
   SPISettings settings(ADC_CLK, MSBFIRST, SPI_MODE0);
-  SPI.begin();
-  SPI.beginTransaction(settings);
+  SPI_2.begin();
+  SPI_2.beginTransaction(settings);
 
   // La auto-calibración del APPS la hace AnalogSensor internamente por tabla de voltaje
   // (ver buildAppsConfig). Con la tabla vacía se usan los límites estáticos.
