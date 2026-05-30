@@ -56,15 +56,22 @@ constexpr int CURRENT_DC_MAX = 60;    // Corriente DC máx (Adc).
 constexpr int RPM_MAX        = 1500;  // ERPM target máximo.
 
 // --- IDs CAN de comandos al inversor (combineInts(PID, NODE_ID)) ---
+// ⚠ SIN CONFIRMAR: con NODE_ID=1, los packets 0x20/0x22/0x24 dan 0x401/0x441/0x481,
+//   que COLISIONAN con lo que el inversor TRANSMITE (0x401-0x481, confirmado con el
+//   DTI CAN Tool V24). En concreto ID_CMD_SET_MAX_DC (0x441) == ID_STS_INV_2 y
+//   ID_CMD_EN (0x481) == ID_STS_INV_4. Verificar los IDs de comando reales con el
+//   DTI CAN Tool / sniffer antes de pista (probablemente NO son packets 0x20-0x24).
 constexpr uint32_t ID_CMD_RPM            = combineInts(0x1C, NODE_ID);
-constexpr uint32_t ID_CMD_EN             = combineInts(0x24, NODE_ID);
+constexpr uint32_t ID_CMD_EN             = combineInts(0x24, NODE_ID);   // ⚠ colisiona con ID_STS_INV_4
 constexpr uint32_t ID_CMD_CURRENT_PCTG   = combineInts(0x1E, NODE_ID);
-constexpr uint32_t ID_CMD_SET_MAX_AC     = combineInts(0x20, NODE_ID);
-constexpr uint32_t ID_CMD_SET_MAX_DC     = combineInts(0x22, NODE_ID);
+constexpr uint32_t ID_CMD_SET_MAX_AC     = combineInts(0x20, NODE_ID);   // ⚠ colisiona con telemetría 0x401
+constexpr uint32_t ID_CMD_SET_MAX_DC     = combineInts(0x22, NODE_ID);   // ⚠ colisiona con ID_STS_INV_2
 
-// --- IDs CAN de estado del inversor ---
-constexpr uint32_t ID_STS_INV_2 = combineInts(0x02, NODE_ID);
-constexpr uint32_t ID_STS_INV_4 = combineInts(0x04, NODE_ID);
+// --- IDs CAN de estado del inversor (CONFIRMADO con el DTI CAN Tool V24:
+//     el inversor transmite packets 0x20-0x24 -> 0x401-0x481). Temps/Fault = packet
+//     0x22 (0x441), Throttle/Brake/DriveEnable = packet 0x24 (0x481). ---
+constexpr uint32_t ID_STS_INV_2 = combineInts(0x22, NODE_ID);   // 0x441 (temps + fault code)
+constexpr uint32_t ID_STS_INV_4 = combineInts(0x24, NODE_ID);   // 0x481 (throttle/brake/drive enable)
 
 // --- IDs CAN de telemetría publicada por la VCU ---
 constexpr unsigned long ID_VCU_DIAG    = 1160;  // 0x488: diagnóstico/post-mortem (hueco "FAIL CODES" libre).
