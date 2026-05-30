@@ -24,11 +24,14 @@ int  stsBrake = 0, stsBrake2 = 0, stsVbatRAW = 0;
 byte canBMSStatus[1];
 uint32_t lastInverterMsg = 0, lastBMSMsg = 0, lastDebug = 0;
 bool debugEnabled = false;
+uint8_t  resetCause = 0;   // Causa del último reset (se lee al arrancar de los flags RCC).
+uint16_t heartbeat  = 0;   // Contador de loop para la telemetría de diagnóstico.
 
 // ===================== BUFFERS DE TELEMETRÍA =====================
 uint16_t CANAppsState[4];
 uint16_t CANBrakeState[4];
 uint8_t  CANVCUSignals[8];
+uint8_t  CANVCUDiag[8];
 
 // ===================== BUFFERS DE COMANDOS AL INVERSOR =====================
 int32_t cmdDataRPM[2]          = {0, (int32_t)UNUSED_INT32};
@@ -43,8 +46,24 @@ SimProfile  simProfile  = SIM_OFF;
 uint32_t    simStepT    = 0;
 int         simAppsProgress = 0;
 
+// Lee la causa del último reset de los flags RCC del STM32 (para diagnóstico:
+// detectar si reseteó el watchdog IWDG por loop colgado). Códigos: 1=power/BOR,
+// 2=pin NRST, 3=software, 4=IWDG, 5=WWDG, 6=low-power, 0=desconocido.
+static uint8_t readResetCause() {
+  uint8_t rc = 0;
+  if      (__HAL_RCC_GET_FLAG(RCC_FLAG_IWDGRST)) rc = 4;
+  else if (__HAL_RCC_GET_FLAG(RCC_FLAG_WWDGRST)) rc = 5;
+  else if (__HAL_RCC_GET_FLAG(RCC_FLAG_LPWRRST)) rc = 6;
+  else if (__HAL_RCC_GET_FLAG(RCC_FLAG_SFTRST))  rc = 3;
+  else if (__HAL_RCC_GET_FLAG(RCC_FLAG_BORRST))  rc = 1;
+  else if (__HAL_RCC_GET_FLAG(RCC_FLAG_PINRST))  rc = 2;
+  __HAL_RCC_CLEAR_RESET_FLAGS();
+  return rc;
+}
+
 void setup() {
   Serial.begin(115200);                 // Inicializa puerto serie para debug.
+  resetCause = readResetCause();        // Causa del último reset (antes de tocar nada).
   lastDebug = millis();                 // Marca de tiempo inicial para debug.
   lastInverterMsg = millis();           // Marca de tiempo inicial para watchdog CAN.
   lastBMSMsg = millis();                // Marca de tiempo inicial para watchdog del BMS (SDC).
@@ -118,5 +137,6 @@ void loop() {
 
   processMenu();
 
+  heartbeat++;          // Para la telemetría de diagnóstico (se congela si el loop se cuelga).
   IWatchdog.reload();   // Alimenta el watchdog del micro (si el loop se cuelga, reset -> DriveEnable LOW).
 }

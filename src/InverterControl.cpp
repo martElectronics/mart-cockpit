@@ -73,16 +73,16 @@ void controlInverter() {
       CAN.setPacket(idCmdCurrentPCTG, cmdDataCurrent, 2);
       CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
       CAN.setPacket(idCmdSetMaxDCCurrent, cmdDataCurrentDCMax, 4);
-
-      cmdDataRPM[0] = map(appsThrottle, 0, 1000, 0, cfgRPMax * 10);
-      CAN.setPacket(idCmdRPM, cmdDataRPM, 2);
+      // Control SOLO por corriente (Set Relative current 0x1E). NO se manda Set ERPM (0x1C):
+      // el manual DTI conmuta el inversor a control por velocidad con 0x1C, y mezclarlo con
+      // 0x1E lo haría cambiar de modo cada ciclo. (idCmdRPM queda disponible si algún día se
+      // quiere control por velocidad.)
     } else {
       cmdDataDriveEN[0] = 0;
       CAN.DataOUT.removePacket(idCmdEN);
       CAN.DataOUT.removePacket(idCmdCurrentPCTG);
       CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
       CAN.DataOUT.removePacket(idCmdSetMaxDCCurrent);
-      CAN.DataOUT.removePacket(idCmdRPM);
     }
   }
   // En MODE_DIRECT el par lo gobierna solo el pin digital (ya fijado arriba).
@@ -112,6 +112,32 @@ void controlInverter() {
   CAN.setPacket(idAPPSState, CANAppsState, 4);
   CAN.setPacket(idBrakeState, CANBrakeState, 4);
   CAN.setPacket(idVCUSignals, CANVCUSignals, 8);
+
+  // ---- Diagnóstico VCU (idVCUDiag 1160) para post-mortem ----
+  // b0 causa-no-par, b1 tipo implausibilidad APPS, b2 flags comms/modo, b3 causa de reset,
+  // b4 fault code inversor, b5 throttle %, b6-7 heartbeat (u16 BE; se congela si el loop muere).
+  bool bmsStale = (millis() - lastBMSMsg) > BMS_WD_MS;
+  bool invFresh = (millis() - lastInverterMsg) <= INVERTER_WD_MS;
+  uint8_t faultCause = 0;                              // 0 = conduciendo / OK
+  if      (driveEnabled)                       faultCause = 0;
+  else if (bmsStale)                           faultCause = 5;  // comms BMS perdidas
+  else if (!stsSDC)                            faultCause = 2;  // SDC abierto
+  else if (inverterFault)                      faultCause = 4;  // fallo del inversor
+  else if (appsState != SensorState::NORMAL)   faultCause = 3;  // APPS implausible
+  else if (!stsR2D)                            faultCause = 1;  // sin R2D (esperando start+freno)
+
+  CANVCUDiag[0] = faultCause;
+  CANVCUDiag[1] = (uint8_t)appsSensor.getImplausibilityType();
+  CANVCUDiag[2] = (uint8_t)((!bmsStale ? 0x01 : 0) | (invFresh ? 0x02 : 0)
+                | (CAN.config.simulating ? 0x04 : 0) | (controlMode == MODE_CAN ? 0x08 : 0)
+                | (debugEnabled ? 0x10 : 0) | (driveEnabled ? 0x20 : 0));
+  CANVCUDiag[3] = resetCause;
+  CANVCUDiag[4] = stsInverterCAN_FaultCode;
+  CANVCUDiag[5] = (uint8_t)(appsThrottle / 10);        // 0..100 %
+  CANVCUDiag[6] = (uint8_t)(heartbeat >> 8);
+  CANVCUDiag[7] = (uint8_t)(heartbeat & 0xFF);
+  CAN.setPacket(idVCUDiag, CANVCUDiag, 8);
+
   CAN.send();
 }
 
@@ -124,7 +150,6 @@ void watchdogCAN() {
     CAN.DataOUT.removePacket(idCmdCurrentPCTG);
     CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
     CAN.DataOUT.removePacket(idCmdSetMaxDCCurrent);
-    CAN.DataOUT.removePacket(idCmdRPM);
     digitalWrite(pinR2D_Digital, LOW);
     CAN.send();
   }

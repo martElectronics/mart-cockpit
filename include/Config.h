@@ -67,6 +67,7 @@ constexpr uint32_t ID_STS_INV_2 = combineInts(0x02, NODE_ID);
 constexpr uint32_t ID_STS_INV_4 = combineInts(0x04, NODE_ID);
 
 // --- IDs CAN de telemetría publicada por la VCU ---
+constexpr unsigned long ID_VCU_DIAG    = 1160;  // 0x488: diagnóstico/post-mortem (hueco "FAIL CODES" libre).
 constexpr unsigned long ID_APPS_STATE  = 1163;
 constexpr unsigned long ID_BRAKE_STATE = 1164;
 constexpr unsigned long ID_VCU_SIGNALS = 1166;

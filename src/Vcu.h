@@ -52,6 +52,7 @@ constexpr uint32_t  idCmdSetMaxDCCurrent = cfg::ID_CMD_SET_MAX_DC;
 constexpr uint32_t  id2StsInverter       = cfg::ID_STS_INV_2;
 constexpr uint32_t  id4StsInverter       = cfg::ID_STS_INV_4;
 // IDs de telemetría publicada por la VCU
+constexpr unsigned long idVCUDiag    = cfg::ID_VCU_DIAG;
 constexpr unsigned long idAPPSState  = cfg::ID_APPS_STATE;
 constexpr unsigned long idBrakeState = cfg::ID_BRAKE_STATE;
 constexpr unsigned long idVCUSignals = cfg::ID_VCU_SIGNALS;
@@ -91,11 +92,14 @@ extern int  stsBrake, stsBrake2, stsVbatRAW;
 extern byte canBMSStatus[1];
 extern uint32_t lastInverterMsg, lastBMSMsg, lastDebug;
 extern bool debugEnabled;
+extern uint8_t  resetCause;    // Causa del último reset del micro (se lee al arrancar).
+extern uint16_t heartbeat;     // Contador de loop (se congela si el firmware se cuelga).
 
 // --------- Buffers de telemetría VCU ---------
 extern uint16_t CANAppsState[4];
 extern uint16_t CANBrakeState[4];
 extern uint8_t  CANVCUSignals[8];
+extern uint8_t  CANVCUDiag[8];
 
 // --------- Buffers de comandos al inversor ---------
 extern int32_t cmdDataRPM[2];
