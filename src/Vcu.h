@@ -15,6 +15,8 @@
 #include "Config.h"
 #include "InverterController.h"
 #include "R2DStateMachine.h"
+#include "SteeringSensor.h"
+#include "WheelSpeed.h"
 
 // --------- Centinelas "no usado" para los paquetes del inversor ---------
 #define UNUSED_BYTE  0xFF
@@ -54,10 +56,20 @@ constexpr uint32_t  idCmdSetMaxDCCurrent = cfg::ID_CMD_SET_MAX_DC;
 constexpr uint32_t  id2StsInverter       = cfg::ID_STS_INV_2;
 constexpr uint32_t  id4StsInverter       = cfg::ID_STS_INV_4;
 // IDs de telemetría publicada por la VCU
-constexpr unsigned long idVCUDiag    = cfg::ID_VCU_DIAG;
-constexpr unsigned long idAPPSState  = cfg::ID_APPS_STATE;
-constexpr unsigned long idBrakeState = cfg::ID_BRAKE_STATE;
-constexpr unsigned long idVCUSignals = cfg::ID_VCU_SIGNALS;
+constexpr unsigned long idVCUDiag     = cfg::ID_VCU_DIAG;
+constexpr unsigned long idAPPSState   = cfg::ID_APPS_STATE;
+constexpr unsigned long idBrakeState  = cfg::ID_BRAKE_STATE;
+constexpr unsigned long idSteerWheels = cfg::ID_STEER_WHEELS;
+constexpr unsigned long idVCUSignals  = cfg::ID_VCU_SIGNALS;
+// Sensores nuevos (dirección + ruedas)
+constexpr MCP3208::Channel chSteer    = cfg::CH_STEER;
+constexpr uint8_t  pinWheelL          = cfg::PIN_WHEEL_L;
+constexpr uint8_t  pinWheelR          = cfg::PIN_WHEEL_R;
+constexpr int      steerAdcLeft       = cfg::STEER_ADC_LEFT;
+constexpr int      steerAdcCenter     = cfg::STEER_ADC_CENTER;
+constexpr int      steerAdcRight      = cfg::STEER_ADC_RIGHT;
+constexpr uint16_t wheelTeeth         = cfg::WHEEL_TEETH;
+constexpr uint32_t wheelWindowMs      = cfg::WHEEL_WINDOW_MS;
 // Límites de control
 constexpr int  cfgBrakeTH      = cfg::BRAKE_TH;
 constexpr int  cfgCurrentACMAX = cfg::CURRENT_AC_MAX;

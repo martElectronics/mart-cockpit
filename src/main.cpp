@@ -35,6 +35,16 @@ InverterController inverter(CAN, id2StsInverter, id4StsInverter,
 // ===================== READY-TO-DRIVE =====================
 R2DStateMachine r2dSM(pinBUZZ, BUZZER_ON_MS);
 
+// ===================== SENSORES (dirección + ruedas) =====================
+SteeringSensor steer(steerAdcLeft, steerAdcCenter, steerAdcRight);
+
+// Pulsos de las ruedas (incrementados por interrupción).
+volatile uint32_t wheelPulsesL = 0, wheelPulsesR = 0;
+static void isrWheelL() { wheelPulsesL++; }
+static void isrWheelR() { wheelPulsesR++; }
+WheelSpeed wheelL(wheelPulsesL, wheelTeeth);
+WheelSpeed wheelR(wheelPulsesR, wheelTeeth);
+
 // ===================== BUFFERS DE TELEMETRÍA =====================
 uint16_t CANAppsState[4];
 uint16_t CANBrakeState[4];
@@ -74,6 +84,13 @@ void setup() {
   pinMode(pinR2D_Digital, OUTPUT);
   digitalWrite(pinR2D_Digital, LOW);   // Estado seguro: DriveEnable LOW al arrancar.
   // (Recomendado: pull-down hardware en pinR2D_Digital para que esté LOW durante el boot/reset.)
+
+  // Velocidad de rueda: entradas de pulsos por interrupción (flanco de subida).
+  // ⚠ INPUT_PULLUP por si el SNDH es open-collector; si la PCB ya lleva pull, usar INPUT.
+  pinMode(pinWheelL, INPUT_PULLUP);
+  pinMode(pinWheelR, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(pinWheelL), isrWheelL, RISING);
+  attachInterrupt(digitalPinToInterrupt(pinWheelR), isrWheelR, RISING);
 
   // Watchdog del micro (IWDG del STM32): si el loop se cuelga > TASK_WDT_TIMEOUT_S,
   // resetea -> DriveEnable a LOW. IWatchdog.begin() recibe el timeout en microsegundos.
@@ -116,6 +133,20 @@ void loop() {
     stsBrake   = adc.read(MCP3208::Channel::SINGLE_4);
     stsBrake2  = adc.read(MCP3208::Channel::SINGLE_5);
     stsVbatRAW = adc.read(MCP3208::Channel::SINGLE_6);
+    steer.update(adc.read(chSteer));   // PSC-360 (dirección)
+
+    // Velocidad de rueda + dirección → CAN 0x48D cada wheelWindowMs.
+    static uint32_t tWheel = 0;
+    if (millis() - tWheel >= wheelWindowMs) {
+      tWheel = millis();
+      wheelL.updateRpm();
+      wheelR.updateRpm();
+      uint16_t d[4] = { (uint16_t)(int16_t)steer.percent(),
+                        (uint16_t)steer.raw(),
+                        (uint16_t)wheelL.rpm(),
+                        (uint16_t)wheelR.rpm() };
+      CAN.setPacket(idSteerWheels, d, 4);   // la emite el CAN.send() de controlInverter
+    }
   }
 
   controlInverter();

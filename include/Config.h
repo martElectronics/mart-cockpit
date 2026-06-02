@@ -22,6 +22,9 @@ constexpr int      NODE_ID        = 1;     // ID/perfil de nodo de la VCU.
 constexpr uint8_t PIN_START       = PB7;   // Pulsador Start (INPUT_PULLUP, activo a 0).
 constexpr uint8_t PIN_BUZZER      = PC8;   // Buzzer R2D.
 constexpr uint8_t PIN_R2D_DIGITAL = PC6;   // DriveEnable digital hacia el inversor.
+// Velocidad de rueda (SNDH-H3L-G01, pulsos Hall por interrupción). ⚠ AJUSTAR a la PCB.
+constexpr uint8_t PIN_WHEEL_L     = PA8;   // Rueda izquierda (entrada de pulsos).
+constexpr uint8_t PIN_WHEEL_R     = PA9;   // Rueda derecha (entrada de pulsos).
 // ADC MCP3208 por SPI2 (CS PB12, CLK PB13, DOUT->MISO PB14, DIN->MOSI PB15).
 // (Nombres PIN_ADC_* para no chocar con los macros PIN_SPI_* del framework STM32duino.)
 constexpr uint8_t PIN_ADC_CS   = PB12;
@@ -37,6 +40,7 @@ constexpr MCP3208::Channel CH_APPS2  = MCP3208::Channel::SINGLE_3;
 constexpr MCP3208::Channel CH_BRAKE1 = MCP3208::Channel::SINGLE_4;
 constexpr MCP3208::Channel CH_BRAKE2 = MCP3208::Channel::SINGLE_5;
 constexpr MCP3208::Channel CH_VBAT   = MCP3208::Channel::SINGLE_6;
+constexpr MCP3208::Channel CH_STEER  = MCP3208::Channel::SINGLE_0;  // PSC-360 (string pot dirección)
 
 // --- Tiempos (ms salvo indicación) ---
 constexpr uint32_t DEBUG_PERIOD_MS   = 500;
@@ -55,6 +59,15 @@ constexpr int CURRENT_AC_MAX = 190;   // Corriente AC máx (Apk).
 constexpr int CURRENT_DC_MAX = 60;    // Corriente DC máx (Adc).
 constexpr int RPM_MAX        = 1500;  // ERPM target máximo.
 
+// --- Sensores nuevos (⚠ CALIBRAR con datos reales) ---
+// Dirección (PSC-360 string pot): cuentas ADC en tope izquierda / centro / derecha.
+constexpr int STEER_ADC_LEFT   = 0;      // tope izquierda  → -100 %
+constexpr int STEER_ADC_CENTER = 2048;   // centro          →    0 %
+constexpr int STEER_ADC_RIGHT  = 4095;   // tope derecha    → +100 %
+// Velocidad de rueda: nº de dientes de la rueda fónica (pulsos por vuelta de rueda).
+constexpr uint16_t WHEEL_TEETH       = 1;     // ⚠ contar los dientes de la corona
+constexpr uint32_t WHEEL_WINDOW_MS   = 100;   // ventana de medida de frecuencia
+
 // --- IDs CAN de comandos al inversor (combineInts(PID, NODE_ID)) ---
 // Numeracion de packets del manual DTI V2.5 (commands 0x01-0x0C). El esquema
 // VIEJO (V2.3: 0x1A-0x24) estaba mal y colisionaba con la telemetria.
@@ -72,8 +85,9 @@ constexpr uint32_t ID_STS_INV_4 = combineInts(0x24, NODE_ID);   // 0x481 (thrott
 
 // --- IDs CAN de telemetría publicada por la VCU ---
 constexpr unsigned long ID_VCU_DIAG    = 1160;  // 0x488: diagnóstico/post-mortem (hueco "FAIL CODES" libre).
-constexpr unsigned long ID_APPS_STATE  = 1163;
-constexpr unsigned long ID_BRAKE_STATE = 1164;
-constexpr unsigned long ID_VCU_SIGNALS = 1166;
+constexpr unsigned long ID_APPS_STATE    = 1163;
+constexpr unsigned long ID_BRAKE_STATE   = 1164;
+constexpr unsigned long ID_STEER_WHEELS  = 1165;  // 0x48D: dirección + velocidad ruedas
+constexpr unsigned long ID_VCU_SIGNALS   = 1166;
 
 } // namespace cfg
