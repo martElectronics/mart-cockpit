@@ -57,33 +57,18 @@ void controlInverter() {
   // ---- Fuente única de verdad para habilitar par ----
   // Una sola condición gobierna TANTO el pin digital DriveEnable COMO el comando CAN.
   // (Antes el pin seguía a stsR2D a secas e ignoraba el APPS en modo CAN.)
-  bool inverterFault = (stsInverterCAN_FaultCode != 0);
+  bool inverterFault = inverter.hasFault();
   bool driveEnabled  = stsR2D && appsOk && !inverterFault;
 
   digitalWrite(pinR2D_Digital, driveEnabled ? HIGH : LOW);
 
+  // Control SOLO por corriente (Set Relative current). NO se manda Set ERPM: el
+  // manual DTI conmuta el inversor a control por velocidad con ese comando, y
+  // mezclarlo lo haría cambiar de modo cada ciclo.
   if (controlMode == MODE_CAN) {
-    if (driveEnabled) {
-      cmdDataDriveEN[0] = 1;
-      CAN.setPacket(idCmdEN, cmdDataDriveEN, 1);
-
-      cmdDataCurrent[0]      = (int16_t)appsThrottle;
-      cmdDataCurrentACMax[0] = (int16_t)(cfgCurrentACMAX * 10);
-      cmdDataCurrentDCMax[0] = (int16_t)(cfgCurrentDCMAX * 10);
-      CAN.setPacket(idCmdCurrentPCTG, cmdDataCurrent, 2);
-      CAN.setPacket(idCmdSetMaxACCurrent, cmdDataCurrentACMax, 4);
-      CAN.setPacket(idCmdSetMaxDCCurrent, cmdDataCurrentDCMax, 4);
-      // Control SOLO por corriente (Set Relative current 0x1E). NO se manda Set ERPM (0x1C):
-      // el manual DTI conmuta el inversor a control por velocidad con 0x1C, y mezclarlo con
-      // 0x1E lo haría cambiar de modo cada ciclo. (idCmdRPM queda disponible si algún día se
-      // quiere control por velocidad.)
-    } else {
-      cmdDataDriveEN[0] = 0;
-      CAN.DataOUT.removePacket(idCmdEN);
-      CAN.DataOUT.removePacket(idCmdCurrentPCTG);
-      CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
-      CAN.DataOUT.removePacket(idCmdSetMaxDCCurrent);
-    }
+    inverter.sendCommands(driveEnabled, (int16_t)appsThrottle,
+                          (int16_t)(cfgCurrentACMAX * 10),
+                          (int16_t)(cfgCurrentDCMAX * 10));
   }
   // En MODE_DIRECT el par lo gobierna solo el pin digital (ya fijado arriba).
   // Si el CAN del BMS cae, stsSDC pasa a false (watchdog) -> stsR2D false -> pin LOW.
@@ -117,7 +102,7 @@ void controlInverter() {
   // b0 causa-no-par, b1 tipo implausibilidad APPS, b2 flags comms/modo, b3 causa de reset,
   // b4 fault code inversor, b5 throttle %, b6-7 heartbeat (u16 BE; se congela si el loop muere).
   bool bmsStale = (millis() - lastBMSMsg) > BMS_WD_MS;
-  bool invFresh = (millis() - lastInverterMsg) <= INVERTER_WD_MS;
+  bool invFresh = inverter.isFresh(INVERTER_WD_MS);
   uint8_t faultCause = 0;                              // 0 = conduciendo / OK
   if      (driveEnabled)                       faultCause = 0;
   else if (bmsStale)                           faultCause = 5;  // comms BMS perdidas
@@ -132,7 +117,7 @@ void controlInverter() {
                 | (CAN.config.simulating ? 0x04 : 0) | (controlMode == MODE_CAN ? 0x08 : 0)
                 | (debugEnabled ? 0x10 : 0) | (driveEnabled ? 0x20 : 0));
   CANVCUDiag[3] = resetCause;
-  CANVCUDiag[4] = stsInverterCAN_FaultCode;
+  CANVCUDiag[4] = inverter.faultCode();
   CANVCUDiag[5] = (uint8_t)(appsThrottle / 10);        // 0..100 %
   CANVCUDiag[6] = (uint8_t)(heartbeat >> 8);
   CANVCUDiag[7] = (uint8_t)(heartbeat & 0xFF);
@@ -143,13 +128,9 @@ void controlInverter() {
 
 // ===================== WATCHDOG CAN =====================
 void watchdogCAN() {
-  if (controlMode == MODE_CAN && !CAN.config.simulating && (millis() - lastInverterMsg > INVERTER_WD_MS)) {
+  if (controlMode == MODE_CAN && !CAN.config.simulating && !inverter.isFresh(INVERTER_WD_MS)) {
     Serial.println("[WD] Inverter RX timeout. Modo seguro.");
-    cmdDataDriveEN[0] = 0;
-    CAN.DataOUT.removePacket(idCmdEN);
-    CAN.DataOUT.removePacket(idCmdCurrentPCTG);
-    CAN.DataOUT.removePacket(idCmdSetMaxACCurrent);
-    CAN.DataOUT.removePacket(idCmdSetMaxDCCurrent);
+    inverter.stop();
     digitalWrite(pinR2D_Digital, LOW);
     CAN.send();
   }
@@ -159,20 +140,13 @@ void watchdogCAN() {
 void readInverterStatus() {
   static uint32_t tAux = millis();
 
-  if (CAN.getPacket(id2StsInverter, stsInverterCAN_22_FULL, 8)) {
-    lastInverterMsg = millis();
-    stsInverterCAN_FaultCode = stsInverterCAN_22_FULL[4];
-  }
-  if (CAN.getPacket(id4StsInverter, stsInverterCAN_24_FULL, 8)) {
-    lastInverterMsg = millis();
-    stsInverterCAN_DriveEnable = stsInverterCAN_24_FULL[3];
-  }
+  inverter.readStatus();
 
   if ((millis() - tAux) >= 1000) {
-    Serial.print("Fault: "); Serial.println(getErrorMessage(stsInverterCAN_FaultCode));
-    if (stsInverterCAN_DriveEnable == 1)      Serial.println("Drive enable OK");
-    else if (stsInverterCAN_DriveEnable == 0) Serial.println("Drive enable FAIL");
-    else                                      Serial.println("Drive enable UNKNOWN");
+    Serial.print("Fault: "); Serial.println(getErrorMessage(inverter.faultCode()));
+    if (inverter.driveEnable() == 1)      Serial.println("Drive enable OK");
+    else if (inverter.driveEnable() == 0) Serial.println("Drive enable FAIL");
+    else                                  Serial.println("Drive enable UNKNOWN");
 
     // (Indicador LED retirado en STM32; el AMS/rojo lo gestiona el HW del SDC.)
 

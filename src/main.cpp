@@ -22,23 +22,21 @@ SensorState appsState = SensorState::NORMAL;
 bool stsStart = false, stsR2D = false, stsSDC = false;
 int  stsBrake = 0, stsBrake2 = 0, stsVbatRAW = 0;
 byte canBMSStatus[1];
-uint32_t lastInverterMsg = 0, lastBMSMsg = 0, lastDebug = 0;
+uint32_t lastBMSMsg = 0, lastDebug = 0;
 bool debugEnabled = false;
 uint8_t  resetCause = 0;   // Causa del último reset (se lee al arrancar de los flags RCC).
 uint16_t heartbeat  = 0;   // Contador de loop para la telemetría de diagnóstico.
+
+// ===================== INVERSOR (E/S CAN encapsulada) =====================
+InverterController inverter(CAN, id2StsInverter, id4StsInverter,
+                            idCmdEN, idCmdCurrentPCTG,
+                            idCmdSetMaxACCurrent, idCmdSetMaxDCCurrent);
 
 // ===================== BUFFERS DE TELEMETRÍA =====================
 uint16_t CANAppsState[4];
 uint16_t CANBrakeState[4];
 uint8_t  CANVCUSignals[8];
 uint8_t  CANVCUDiag[8];
-
-// ===================== BUFFERS DE COMANDOS AL INVERSOR =====================
-int32_t cmdDataRPM[2]          = {0, (int32_t)UNUSED_INT32};
-int16_t cmdDataCurrent[4]      = {0, UNUSED_SHORT, UNUSED_SHORT, UNUSED_SHORT};
-int16_t cmdDataCurrentACMax[4] = {0, UNUSED_SHORT, UNUSED_SHORT, UNUSED_SHORT};
-int16_t cmdDataCurrentDCMax[4] = {0, UNUSED_SHORT, UNUSED_SHORT, UNUSED_SHORT};
-byte    cmdDataDriveEN[8]      = {0, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE, UNUSED_BYTE};
 
 // ===================== MODO DE CONTROL / SIMULACIÓN =====================
 ControlMode controlMode = MODE_DIRECT;   // Modo por defecto: DIRECTO.
@@ -65,7 +63,6 @@ void setup() {
   Serial.begin(115200);                 // Inicializa puerto serie para debug.
   resetCause = readResetCause();        // Causa del último reset (antes de tocar nada).
   lastDebug = millis();                 // Marca de tiempo inicial para debug.
-  lastInverterMsg = millis();           // Marca de tiempo inicial para watchdog CAN.
   lastBMSMsg = millis();                // Marca de tiempo inicial para watchdog del BMS (SDC).
 
   // Configuración de pines.
@@ -111,12 +108,6 @@ void loop() {
       stsSDC = false;   // fail-safe: sin tramas del BMS, el SDC no se considera presente
     }
 
-    if (controlMode == MODE_CAN) {
-      if (CAN.getPacket(id2StsInverter, stsInverterCAN_22_FULL, 8) ||
-          CAN.getPacket(id4StsInverter, stsInverterCAN_24_FULL, 8)) {
-        lastInverterMsg = millis();
-      }
-    }
     rawApps1   = adc.read(MCP3208::Channel::SINGLE_2);
     rawApps2   = adc.read(MCP3208::Channel::SINGLE_3);
     stsBrake   = adc.read(MCP3208::Channel::SINGLE_4);

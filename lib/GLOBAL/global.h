@@ -26,11 +26,8 @@ inline const char* getErrorMessage(uint8_t errorCode) {
   return "Unknown error code";
 }
 
-// ---- Estado del inversor recibido por CAN (solo lo que se usa) ----
-inline uint8_t stsInverterCAN_FaultCode;     // packet 0x22, byte 4
-inline uint8_t stsInverterCAN_DriveEnable;   // packet 0x24, byte 3
-inline byte    stsInverterCAN_22_FULL[8];    // trama temps/fault cruda
-inline byte    stsInverterCAN_24_FULL[8];    // trama throttle/brake/driveEN cruda
+// (El estado del inversor recibido por CAN — fault code, drive enable — vive en
+//  la clase InverterController, no en globales sueltos.)
 
 // ID CAN = (PacketID << 5) | NodeID (modo Standard del HV-500).
 constexpr uint32_t combineInts(uint32_t int1, uint32_t int2) {

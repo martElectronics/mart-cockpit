@@ -13,6 +13,7 @@
 #include "global.h"
 #include "PairedAnalogSensor.h"
 #include "Config.h"
+#include "InverterController.h"
 
 // --------- Centinelas "no usado" para los paquetes del inversor ---------
 #define UNUSED_BYTE  0xFF
@@ -90,23 +91,19 @@ extern SensorState appsState;
 extern bool stsStart, stsR2D, stsSDC;
 extern int  stsBrake, stsBrake2, stsVbatRAW;
 extern byte canBMSStatus[1];
-extern uint32_t lastInverterMsg, lastBMSMsg, lastDebug;
+extern uint32_t lastBMSMsg, lastDebug;
 extern bool debugEnabled;
 extern uint8_t  resetCause;    // Causa del último reset del micro (se lee al arrancar).
 extern uint16_t heartbeat;     // Contador de loop (se congela si el firmware se cuelga).
+
+// --------- Inversor (E/S CAN encapsulada) ---------
+extern InverterController inverter;
 
 // --------- Buffers de telemetría VCU ---------
 extern uint16_t CANAppsState[4];
 extern uint16_t CANBrakeState[4];
 extern uint8_t  CANVCUSignals[8];
 extern uint8_t  CANVCUDiag[8];
-
-// --------- Buffers de comandos al inversor ---------
-extern int32_t cmdDataRPM[2];
-extern int16_t cmdDataCurrent[4];
-extern int16_t cmdDataCurrentACMax[4];
-extern int16_t cmdDataCurrentDCMax[4];
-extern byte    cmdDataDriveEN[8];
 
 // --------- Modo de control / simulación ---------
 extern ControlMode controlMode;

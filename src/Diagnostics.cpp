@@ -5,7 +5,7 @@ void debug() {
   if ((millis() - lastDebug) < DEBUG_PERIOD_MS) return;
   lastDebug = millis();
 
-  uint32_t canAgeMs = millis() - lastInverterMsg;
+  uint32_t canAgeMs = millis() - inverter.lastMsg();
 
   Serial.println("\n=== DEBUG VCU ===");
   Serial.print("Mode: "); Serial.println(controlMode == MODE_CAN ? "CAN" : "DIRECT");
@@ -35,11 +35,11 @@ void debug() {
   Serial.print(" | RPMmax: ");       Serial.println(cfgRPMax);
 
   Serial.print("Inverter -> DriveEnable: ");
-  if (stsInverterCAN_DriveEnable == 1)      Serial.print("ON");
-  else if (stsInverterCAN_DriveEnable == 0) Serial.print("OFF");
-  else                                      Serial.print("UNKNOWN");
-  Serial.print(" | Fault: "); Serial.print(stsInverterCAN_FaultCode);
-  Serial.print(" ("); Serial.print(getErrorMessage(stsInverterCAN_FaultCode)); Serial.print(")");
+  if (inverter.driveEnable() == 1)      Serial.print("ON");
+  else if (inverter.driveEnable() == 0) Serial.print("OFF");
+  else                                  Serial.print("UNKNOWN");
+  Serial.print(" | Fault: "); Serial.print(inverter.faultCode());
+  Serial.print(" ("); Serial.print(getErrorMessage(inverter.faultCode())); Serial.print(")");
   Serial.print(" | last msg age: "); Serial.print(canAgeMs); Serial.println(" ms");
 
   Serial.print("Sim: ");
