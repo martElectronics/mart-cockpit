@@ -14,6 +14,7 @@
 #include "PairedAnalogSensor.h"
 #include "Config.h"
 #include "InverterController.h"
+#include "R2DStateMachine.h"
 
 // --------- Centinelas "no usado" para los paquetes del inversor ---------
 #define UNUSED_BYTE  0xFF
@@ -99,6 +100,9 @@ extern uint16_t heartbeat;     // Contador de loop (se congela si el firmware se
 // --------- Inversor (E/S CAN encapsulada) ---------
 extern InverterController inverter;
 
+// --------- Ready-to-Drive (máquina de estados) ---------
+extern R2DStateMachine r2dSM;
+
 // --------- Buffers de telemetría VCU ---------
 extern uint16_t CANAppsState[4];
 extern uint16_t CANBrakeState[4];
@@ -113,7 +117,6 @@ extern int simAppsProgress;
 
 // --------- Prototipos de los módulos ---------
 PairedAnalogSensorConfig buildAppsConfig();             // InverterControl.cpp
-bool R2D(bool sdc, bool start, bool brake);             // R2d.cpp
 void runSimulation();                                   // Simulation.cpp
 void controlInverter();                                 // InverterControl.cpp
 void watchdogCAN();                                     // InverterControl.cpp

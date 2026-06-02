@@ -32,6 +32,9 @@ InverterController inverter(CAN, id2StsInverter, id4StsInverter,
                             idCmdEN, idCmdCurrentPCTG,
                             idCmdSetMaxACCurrent, idCmdSetMaxDCCurrent);
 
+// ===================== READY-TO-DRIVE =====================
+R2DStateMachine r2dSM(pinBUZZ, BUZZER_ON_MS);
+
 // ===================== BUFFERS DE TELEMETRÍA =====================
 uint16_t CANAppsState[4];
 uint16_t CANBrakeState[4];

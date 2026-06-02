@@ -52,7 +52,7 @@ void controlInverter() {
   bool appsOk = (appsState == SensorState::NORMAL);
   int  appsThrottle = (int)appsMeanS;   // Consigna 0..1000 (la clase ya devuelve 0 si hay implausibilidad).
 
-  stsR2D = R2D(stsSDC, stsStart, (stsBrake2 >= cfgBrakeTH));
+  stsR2D = r2dSM.update(stsSDC, stsStart, (stsBrake2 >= cfgBrakeTH));
 
   // ---- Fuente única de verdad para habilitar par ----
   // Una sola condición gobierna TANTO el pin digital DriveEnable COMO el comando CAN.
