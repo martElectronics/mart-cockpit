@@ -55,8 +55,9 @@ constexpr uint8_t  BMS_SDC_BIT   = 2;    // BMS_SDC = byte 0, bit 2 (SDC present
 
 // --- Límites de control ---
 constexpr int BRAKE_TH       = 550;   // Umbral de freno (cuentas ADC) para R2D.
-constexpr int CURRENT_AC_MAX = 190;   // Corriente AC máx (Apk) = Motor Current Max del DTI.
-constexpr int CURRENT_DC_MAX = 60;    // Corriente DC máx (Adc).
+constexpr int CURRENT_AC_MAX     = 190;   // Corriente AC máx en Arms (referencia del limitador; 100% = 190 Arms).
+constexpr int CURRENT_AC_MAX_APK = 269;   // Set Max AC del DTI en Apk (= 190 Arms × √2 = Motor Current Max).
+constexpr int CURRENT_DC_MAX     = 125;   // Set Max DC del DTI (Adc) = fusible de batería (125 A).
 constexpr int RPM_MAX        = 1500;  // ERPM target máximo.
 
 // --- Limitador dinámico de potencia (VCU → DTI), ver EMRAX188HV_DTI_HV500_v3 §5 ---

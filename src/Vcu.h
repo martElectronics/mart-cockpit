@@ -74,8 +74,9 @@ constexpr uint16_t wheelTeeth         = cfg::WHEEL_TEETH;
 constexpr uint32_t wheelWindowMs      = cfg::WHEEL_WINDOW_MS;
 // Límites de control
 constexpr int  cfgBrakeTH      = cfg::BRAKE_TH;
-constexpr int  cfgCurrentACMAX = cfg::CURRENT_AC_MAX;
-constexpr int  cfgCurrentDCMAX = cfg::CURRENT_DC_MAX;
+constexpr int  cfgCurrentACMAX    = cfg::CURRENT_AC_MAX;       // Arms (referencia del limitador)
+constexpr int  cfgCurrentACMAXApk = cfg::CURRENT_AC_MAX_APK;   // Apk (comando Set Max AC al DTI)
+constexpr int  cfgCurrentDCMAX    = cfg::CURRENT_DC_MAX;
 constexpr int  cfgRPMax        = cfg::RPM_MAX;
 // Limitador dinámico de potencia
 constexpr float cfgKtEff       = cfg::KT_EFF;

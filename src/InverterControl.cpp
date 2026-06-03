@@ -78,7 +78,7 @@ void controlInverter() {
   // mezclarlo lo haría cambiar de modo cada ciclo.
   if (controlMode == MODE_CAN) {
     inverter.sendCommands(driveEnabled, (int16_t)appsThrottle,
-                          (int16_t)(cfgCurrentACMAX * 10),
+                          (int16_t)(cfgCurrentACMAXApk * 10),
                           (int16_t)(cfgCurrentDCMAX * 10));
   }
   // En MODE_DIRECT el par lo gobierna solo el pin digital (ya fijado arriba).

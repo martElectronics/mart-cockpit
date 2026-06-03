@@ -28,7 +28,7 @@ public:
     if (_can.getPacket(_idStsMain, _rxMain, 8)) {           // 0x401: eRPM (int32 BE) + Vin (int16 BE)
       _erpm = (int32_t)(((uint32_t)_rxMain[0] << 24) | ((uint32_t)_rxMain[1] << 16)
                       | ((uint32_t)_rxMain[2] << 8)  |  (uint32_t)_rxMain[3]);
-      _dcVoltage = (int16_t)(((uint16_t)_rxMain[6] << 8) | _rxMain[7]);  // V (⚠ verificar escala)
+      _dcVoltage = (int16_t)(((uint16_t)_rxMain[6] << 8) | _rxMain[7]);  // V (escala 1; confirmado manual V2.5 §3.6, ej. 0x0186=390 V)
       _lastMsg = millis(); got = true;
     }
     if (_can.getPacket(_idStsTemps, _rxTemps, 8)) { _faultCode   = _rxTemps[4]; _lastMsg = millis(); got = true; }
@@ -45,9 +45,12 @@ public:
     _cmdCurrent[0] = throttle;
     _cmdMaxAC[0]   = maxAC_x10;
     _cmdMaxDC[0]   = maxDC_x10;
-    _can.setPacket(_idCmdCurrent, _cmdCurrent, 2);
-    _can.setPacket(_idCmdMaxAC,   _cmdMaxAC,   4);
-    _can.setPacket(_idCmdMaxDC,   _cmdMaxDC,   4);
+    // 1 sola palabra int16 (bytes 0-1); setPacket rellena 2-7 con 0xFF, como pide
+    // el manual §4.2 ("NOT USED, fill with FFs"). Antes se mandaban 2/4 -> dejaba
+    // centinelas 0x7F en bytes "no usados".
+    _can.setPacket(_idCmdCurrent, _cmdCurrent, 1);
+    _can.setPacket(_idCmdMaxAC,   _cmdMaxAC,   1);
+    _can.setPacket(_idCmdMaxDC,   _cmdMaxDC,   1);
   }
 
   // Retira todos los comandos (modo seguro): el inversor deja de recibir y entra

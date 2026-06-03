@@ -56,7 +56,7 @@ uint8_t  CANVCUSignals[8];
 uint8_t  CANVCUDiag[8];
 
 // ===================== MODO DE CONTROL / SIMULACIÓN =====================
-ControlMode controlMode = MODE_DIRECT;   // Modo por defecto: DIRECTO.
+ControlMode controlMode = MODE_CAN;   // Modo por defecto: CAN (el coche corre en CAN).
 SimProfile  simProfile  = SIM_OFF;
 uint32_t    simStepT    = 0;
 int         simAppsProgress = 0;
