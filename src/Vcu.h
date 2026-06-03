@@ -14,6 +14,7 @@
 #include "PairedAnalogSensor.h"
 #include "Config.h"
 #include "InverterController.h"
+#include "PowerLimiter.h"
 #include "R2DStateMachine.h"
 #include "SteeringSensor.h"
 #include "WheelSpeed.h"
@@ -53,6 +54,7 @@ constexpr uint32_t  idCmdCurrentPCTG     = cfg::ID_CMD_CURRENT_PCTG;
 constexpr uint32_t  idCmdSetMaxACCurrent = cfg::ID_CMD_SET_MAX_AC;
 constexpr uint32_t  idCmdSetMaxDCCurrent = cfg::ID_CMD_SET_MAX_DC;
 // IDs de estado del inversor
+constexpr uint32_t  id0StsInverter       = cfg::ID_STS_INV_0;
 constexpr uint32_t  id2StsInverter       = cfg::ID_STS_INV_2;
 constexpr uint32_t  id4StsInverter       = cfg::ID_STS_INV_4;
 // IDs de telemetría publicada por la VCU
@@ -75,6 +77,13 @@ constexpr int  cfgBrakeTH      = cfg::BRAKE_TH;
 constexpr int  cfgCurrentACMAX = cfg::CURRENT_AC_MAX;
 constexpr int  cfgCurrentDCMAX = cfg::CURRENT_DC_MAX;
 constexpr int  cfgRPMax        = cfg::RPM_MAX;
+// Limitador dinámico de potencia
+constexpr float cfgKtEff       = cfg::KT_EFF;
+constexpr float cfgIFuseMax    = cfg::I_FUSE_MAX_A;
+constexpr float cfgEtaInv      = cfg::ETA_INV;
+constexpr float cfgPMaxW       = cfg::P_MAX_W;
+constexpr uint8_t cfgPolePairs = cfg::POLE_PAIRS;
+constexpr float cfgVPackMinOp  = cfg::V_PACK_MIN_OP;
 
 // --------- Modo de control ---------
 enum ControlMode { MODE_CAN, MODE_DIRECT };
@@ -111,6 +120,9 @@ extern uint16_t heartbeat;     // Contador de loop (se congela si el firmware se
 
 // --------- Inversor (E/S CAN encapsulada) ---------
 extern InverterController inverter;
+
+// --------- Limitador dinámico de potencia ---------
+extern PowerLimiter powerLimiter;
 
 // --------- Ready-to-Drive (máquina de estados) ---------
 extern R2DStateMachine r2dSM;

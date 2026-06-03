@@ -13,18 +13,24 @@
 class InverterController {
 public:
   InverterController(CAN_BUS& can,
-                     uint32_t idStsTemps, uint32_t idStsMisc,
+                     uint32_t idStsMain, uint32_t idStsTemps, uint32_t idStsMisc,
                      uint32_t idCmdEN, uint32_t idCmdCurrent,
                      uint32_t idCmdMaxAC, uint32_t idCmdMaxDC)
-    : _can(can), _idStsTemps(idStsTemps), _idStsMisc(idStsMisc),
+    : _can(can), _idStsMain(idStsMain), _idStsTemps(idStsTemps), _idStsMisc(idStsMisc),
       _idCmdEN(idCmdEN), _idCmdCurrent(idCmdCurrent),
       _idCmdMaxAC(idCmdMaxAC), _idCmdMaxDC(idCmdMaxDC) {}
 
-  // Lee las tramas de estado del inversor: 0x441 (temps/fault, byte 4 = fault
-  // code) y 0x481 (throttle/brake/driveEN, byte 3 = drive enable). Refresca el
-  // timestamp de "vivo". Devuelve true si llegó alguna.
+  // Lee las tramas de estado del inversor: 0x401 (eRPM b0-3, Vin b6-7), 0x441
+  // (temps/fault, byte 4 = fault code) y 0x481 (throttle/brake/driveEN, byte 3 =
+  // drive enable). Refresca el timestamp de "vivo". Devuelve true si llegó alguna.
   bool readStatus() {
     bool got = false;
+    if (_can.getPacket(_idStsMain, _rxMain, 8)) {           // 0x401: eRPM (int32 BE) + Vin (int16 BE)
+      _erpm = (int32_t)(((uint32_t)_rxMain[0] << 24) | ((uint32_t)_rxMain[1] << 16)
+                      | ((uint32_t)_rxMain[2] << 8)  |  (uint32_t)_rxMain[3]);
+      _dcVoltage = (int16_t)(((uint16_t)_rxMain[6] << 8) | _rxMain[7]);  // V (⚠ verificar escala)
+      _lastMsg = millis(); got = true;
+    }
     if (_can.getPacket(_idStsTemps, _rxTemps, 8)) { _faultCode   = _rxTemps[4]; _lastMsg = millis(); got = true; }
     if (_can.getPacket(_idStsMisc,  _rxMisc,  8)) { _driveEnable = _rxMisc[3];  _lastMsg = millis(); got = true; }
     return got;
@@ -56,18 +62,23 @@ public:
 
   uint8_t  faultCode()   const         { return _faultCode; }
   uint8_t  driveEnable() const         { return _driveEnable; }
+  float    dcVoltage()   const         { return (float)_dcVoltage; }   // V del pack (0x401)
+  float    erpm()        const         { return (float)_erpm; }        // velocidad eléctrica (0x401)
   uint32_t lastMsg()     const         { return _lastMsg; }
   bool     hasFault()    const         { return _faultCode != 0; }
   bool     isFresh(uint32_t toMs) const { return (millis() - _lastMsg) <= toMs; }
 
 private:
   CAN_BUS&       _can;
-  const uint32_t _idStsTemps, _idStsMisc;
+  const uint32_t _idStsMain, _idStsTemps, _idStsMisc;
   const uint32_t _idCmdEN, _idCmdCurrent, _idCmdMaxAC, _idCmdMaxDC;
 
   uint8_t  _faultCode   = 0;
   uint8_t  _driveEnable = 0;
+  int32_t  _erpm        = 0;
+  int16_t  _dcVoltage   = 0;
   uint32_t _lastMsg     = 0;
+  byte     _rxMain[8]   = {0};
   byte     _rxTemps[8]  = {0};
   byte     _rxMisc[8]   = {0};
   // Buffers de comando: slot 0 = dato; resto centinela "no usado" (igual que antes).

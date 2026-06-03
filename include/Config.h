@@ -55,9 +55,19 @@ constexpr uint8_t  BMS_SDC_BIT   = 2;    // BMS_SDC = byte 0, bit 2 (SDC present
 
 // --- Límites de control ---
 constexpr int BRAKE_TH       = 550;   // Umbral de freno (cuentas ADC) para R2D.
-constexpr int CURRENT_AC_MAX = 190;   // Corriente AC máx (Apk).
+constexpr int CURRENT_AC_MAX = 190;   // Corriente AC máx (Apk) = Motor Current Max del DTI.
 constexpr int CURRENT_DC_MAX = 60;    // Corriente DC máx (Adc).
 constexpr int RPM_MAX        = 1500;  // ERPM target máximo.
+
+// --- Limitador dinámico de potencia (VCU → DTI), ver EMRAX188HV_DTI_HV500_v3 §5 ---
+// i_ac_max = (V_dc·I_fuse·η)/(K_T·ω_mec), clampeado a P_MAX y a CURRENT_AC_MAX.
+// Solo muerde por encima de ~base; sin field weakening (el rango queda por debajo).
+constexpr float    KT_EFF       = 0.4865f;  // Nm/Arms (1.5·p·λ_pm)
+constexpr float    I_FUSE_MAX_A = 125.0f;   // A DC — límite del fusible
+constexpr float    ETA_INV      = 0.95f;    // eficiencia inversor
+constexpr float    P_MAX_W      = 65000.0f; // W — Maximum Wattage del DTI
+constexpr uint8_t  POLE_PAIRS   = 10;       // EMRAX 188 (eRPM = RPM·10)
+constexpr float    V_PACK_MIN_OP = 350.0f;  // V — mínimo operativo (⚠ 292 para 10 módulos)
 
 // --- Sensores nuevos (⚠ CALIBRAR con datos reales) ---
 // Dirección (PSC-360 string pot): cuentas ADC en tope izquierda / centro / derecha.
@@ -80,6 +90,7 @@ constexpr uint32_t ID_CMD_SET_MAX_DC     = combineInts(0x0A, NODE_ID);   // 0x14
 // --- IDs CAN de estado del inversor (transmit packets 0x20-0x24 -> 0x401-0x481,
 //     Standard ID, node 1). Temps/Fault = 0x22 (0x441); Throttle/Brake/DriveEnable
 //     = 0x24 (0x481). Sin colision con los comandos (0x21-0x181). ---
+constexpr uint32_t ID_STS_INV_0 = combineInts(0x20, NODE_ID);   // 0x401 (eRPM b0-3 + Vin b6-7)
 constexpr uint32_t ID_STS_INV_2 = combineInts(0x22, NODE_ID);   // 0x441 (temps + fault code)
 constexpr uint32_t ID_STS_INV_4 = combineInts(0x24, NODE_ID);   // 0x481 (throttle/brake/drive enable)
 

@@ -28,9 +28,13 @@ uint8_t  resetCause = 0;   // Causa del último reset (se lee al arrancar de los
 uint16_t heartbeat  = 0;   // Contador de loop para la telemetría de diagnóstico.
 
 // ===================== INVERSOR (E/S CAN encapsulada) =====================
-InverterController inverter(CAN, id2StsInverter, id4StsInverter,
+InverterController inverter(CAN, id0StsInverter, id2StsInverter, id4StsInverter,
                             idCmdEN, idCmdCurrentPCTG,
                             idCmdSetMaxACCurrent, idCmdSetMaxDCCurrent);
+
+// Limitador dinámico de potencia (capa el throttle según V_dc/eRPM del inversor).
+PowerLimiter powerLimiter(cfgKtEff, cfgIFuseMax, (float)cfgCurrentACMAX,
+                          cfgEtaInv, cfgPMaxW, cfgPolePairs);
 
 // ===================== READY-TO-DRIVE =====================
 R2DStateMachine r2dSM(pinBUZZ, BUZZER_ON_MS);

@@ -52,6 +52,17 @@ void controlInverter() {
   bool appsOk = (appsState == SensorState::NORMAL);
   int  appsThrottle = (int)appsMeanS;   // Consigna 0..1000 (la clase ya devuelve 0 si hay implausibilidad).
 
+  // ---- Límite dinámico de potencia (conforme baja V_dc del pack) ----
+  // Capa el throttle relativo (0..1000) a la corriente AC máx que permite el
+  // fusible/Max Wattage al voltaje actual. Solo con telemetría fresca y plausible
+  // del inversor; si falta, se delega en los límites internos del DTI.
+  if (inverter.isFresh(INVERTER_WD_MS) && inverter.dcVoltage() > 10.0f) {
+    float iAcMax = powerLimiter.maxAcCurrent(inverter.dcVoltage(), inverter.erpm());
+    int   cap    = (int)((iAcMax / (float)cfgCurrentACMAX) * 1000.0f);
+    if (appsThrottle > cap) appsThrottle = cap;
+    if (inverter.dcVoltage() < cfgVPackMinOp) appsThrottle = 0;   // subtensión → sin par
+  }
+
   stsR2D = r2dSM.update(stsSDC, stsStart, (stsBrake2 >= cfgBrakeTH));
 
   // ---- Fuente única de verdad para habilitar par ----
