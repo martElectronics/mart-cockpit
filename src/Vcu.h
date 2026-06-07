@@ -47,44 +47,45 @@ constexpr uint8_t   adcMosi        = cfg::PIN_ADC_MOSI;
 constexpr uint8_t   pinStart       = cfg::PIN_START;
 constexpr uint8_t   pinBUZZ        = cfg::PIN_BUZZER;
 constexpr uint8_t   pinR2D_Digital = cfg::PIN_R2D_DIGITAL;
-// IDs de comandos al inversor
-constexpr uint32_t  idCmdRPM             = cfg::ID_CMD_RPM;
-constexpr uint32_t  idCmdEN              = cfg::ID_CMD_EN;
-constexpr uint32_t  idCmdCurrentPCTG     = cfg::ID_CMD_CURRENT_PCTG;
-constexpr uint32_t  idCmdSetMaxACCurrent = cfg::ID_CMD_SET_MAX_AC;
-constexpr uint32_t  idCmdSetMaxDCCurrent = cfg::ID_CMD_SET_MAX_DC;
-// IDs de estado del inversor
-constexpr uint32_t  id0StsInverter       = cfg::ID_STS_INV_0;
-constexpr uint32_t  id2StsInverter       = cfg::ID_STS_INV_2;
-constexpr uint32_t  id4StsInverter       = cfg::ID_STS_INV_4;
-// IDs de telemetría publicada por la VCU
-constexpr unsigned long idVCUDiag     = cfg::ID_VCU_DIAG;
-constexpr unsigned long idAPPSState   = cfg::ID_APPS_STATE;
-constexpr unsigned long idBrakeState  = cfg::ID_BRAKE_STATE;
-constexpr unsigned long idSteerWheels = cfg::ID_STEER_WHEELS;
-constexpr unsigned long idVCUSignals  = cfg::ID_VCU_SIGNALS;
-// Sensores nuevos (dirección + ruedas)
-constexpr MCP3208::Channel chSteer    = cfg::CH_STEER;
-constexpr uint8_t  pinWheelL          = cfg::PIN_WHEEL_L;
-constexpr uint8_t  pinWheelR          = cfg::PIN_WHEEL_R;
-constexpr int      steerAdcLeft       = cfg::STEER_ADC_LEFT;
-constexpr int      steerAdcCenter     = cfg::STEER_ADC_CENTER;
-constexpr int      steerAdcRight      = cfg::STEER_ADC_RIGHT;
-constexpr uint16_t wheelTeeth         = cfg::WHEEL_TEETH;
-constexpr uint32_t wheelWindowMs      = cfg::WHEEL_WINDOW_MS;
+// IDs de comandos al inversor (combineInts(packet, NODE_ID=1) → Standard ID).
+// Numeración de packets del manual DTI CAN V2.5 §4.
+constexpr uint32_t  idCmdRPM             = cfg::ID_CMD_RPM;            // 0x061 Set ERPM (packet 0x03) — NO se usa: pasaría el DTI a control por velocidad
+constexpr uint32_t  idCmdEN              = cfg::ID_CMD_EN;             // 0x181 Drive enable (packet 0x0C)
+constexpr uint32_t  idCmdCurrentPCTG     = cfg::ID_CMD_CURRENT_PCTG;  // 0x0A1 Set Relative current (% ×10, 0..1000; packet 0x05)
+constexpr uint32_t  idCmdSetMaxACCurrent = cfg::ID_CMD_SET_MAX_AC;    // 0x101 Set max AC current (Apk ×10; packet 0x08)
+constexpr uint32_t  idCmdSetMaxDCCurrent = cfg::ID_CMD_SET_MAX_DC;    // 0x141 Set max DC current (Adc ×10; packet 0x0A)
+// IDs de estado que EMITE el inversor (transmit packets del DTI → Standard ID, node 1).
+constexpr uint32_t  id0StsInverter       = cfg::ID_STS_INV_0;  // 0x401 (packet 0x20): eRPM b0-3 (int32), Duty b4-5, Vin b6-7 (int16, V)
+constexpr uint32_t  id2StsInverter       = cfg::ID_STS_INV_2;  // 0x441 (packet 0x22): temps + fault code (byte 4)
+constexpr uint32_t  id4StsInverter       = cfg::ID_STS_INV_4;  // 0x481 (packet 0x24): throttle/brake/drive enable (byte 3)
+// IDs de telemetría que PUBLICA la VCU.
+constexpr unsigned long idVCUDiag     = cfg::ID_VCU_DIAG;      // 0x488 diagnóstico/post-mortem (faultCause, heartbeat, resetCause)
+constexpr unsigned long idAPPSState   = cfg::ID_APPS_STATE;    // 0x48B APPS (escalado 0..1000 + raw de ambos sensores)
+constexpr unsigned long idBrakeState  = cfg::ID_BRAKE_STATE;   // 0x48C freno (raw de ambos sensores)
+constexpr unsigned long idSteerWheels = cfg::ID_STEER_WHEELS;  // 0x48D dirección (% + raw) + velocidad de ruedas (RPM)
+constexpr unsigned long idVCUSignals  = cfg::ID_VCU_SIGNALS;   // 0x48E señales (Vbat, SDC, Start, R2D, estado APPS)
+// Sensores nuevos (dirección + ruedas). Valores reales en Config.h.
+constexpr MCP3208::Channel chSteer    = cfg::CH_STEER;         // canal ADC del string pot PSC-360 (dirección)
+constexpr uint8_t  pinWheelL          = cfg::PIN_WHEEL_L;      // pin de pulsos rueda IZQ (entrada por interrupción)
+constexpr uint8_t  pinWheelR          = cfg::PIN_WHEEL_R;      // pin de pulsos rueda DER (entrada por interrupción)
+constexpr int      steerAdcLeft       = cfg::STEER_ADC_LEFT;   // cuenta ADC en tope izquierda  → −100 %
+constexpr int      steerAdcCenter     = cfg::STEER_ADC_CENTER; // cuenta ADC en centro          →    0 %
+constexpr int      steerAdcRight      = cfg::STEER_ADC_RIGHT;  // cuenta ADC en tope derecha    → +100 %
+constexpr uint16_t wheelTeeth         = cfg::WHEEL_TEETH;      // dientes de la corona = pulsos por vuelta de rueda
+constexpr uint32_t wheelWindowMs      = cfg::WHEEL_WINDOW_MS;  // ventana de medida de RPM (ms)
 // Límites de control
-constexpr int  cfgBrakeTH      = cfg::BRAKE_TH;
-constexpr int  cfgCurrentACMAX    = cfg::CURRENT_AC_MAX;       // Arms (referencia del limitador)
-constexpr int  cfgCurrentACMAXApk = cfg::CURRENT_AC_MAX_APK;   // Apk (comando Set Max AC al DTI)
-constexpr int  cfgCurrentDCMAX    = cfg::CURRENT_DC_MAX;
-constexpr int  cfgRPMax        = cfg::RPM_MAX;
-// Limitador dinámico de potencia
-constexpr float cfgKtEff       = cfg::KT_EFF;
-constexpr float cfgIFuseMax    = cfg::I_FUSE_MAX_A;
-constexpr float cfgEtaInv      = cfg::ETA_INV;
-constexpr float cfgPMaxW       = cfg::P_MAX_W;
-constexpr uint8_t cfgPolePairs = cfg::POLE_PAIRS;
-constexpr float cfgVPackMinOp  = cfg::V_PACK_MIN_OP;
+constexpr int  cfgBrakeTH      = cfg::BRAKE_TH;               // cuentas ADC de freno para armar R2D
+constexpr int  cfgCurrentACMAX    = cfg::CURRENT_AC_MAX;       // Arms — referencia del limitador (100% = este valor)
+constexpr int  cfgCurrentACMAXApk = cfg::CURRENT_AC_MAX_APK;   // Apk — valor del comando Set Max AC al DTI
+constexpr int  cfgCurrentDCMAX    = cfg::CURRENT_DC_MAX;       // Adc — comando Set Max DC al DTI (= fusible)
+constexpr int  cfgRPMax        = cfg::RPM_MAX;                // ERPM target máximo (no usado: control por corriente)
+// Limitador dinámico de potencia (ver PowerLimiter.h)
+constexpr float cfgKtEff       = cfg::KT_EFF;        // Nm/Arms — constante de par efectiva (1.5·p·λ_pm)
+constexpr float cfgIFuseMax    = cfg::I_FUSE_MAX_A;  // A DC — límite del fusible de batería
+constexpr float cfgEtaInv      = cfg::ETA_INV;       // eficiencia del inversor (0..1)
+constexpr float cfgPMaxW       = cfg::P_MAX_W;       // W — Maximum Wattage configurado en el DTI
+constexpr uint8_t cfgPolePairs = cfg::POLE_PAIRS;    // pares de polos (eRPM = RPM_mec × pares)
+constexpr float cfgVPackMinOp  = cfg::V_PACK_MIN_OP; // V — mínimo operativo; por debajo → corte de par
 
 // --------- Modo de control ---------
 enum ControlMode { MODE_CAN, MODE_DIRECT };
