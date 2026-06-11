@@ -1,0 +1,6 @@
+[submodule "lib/CAN-Library"]
+	path = lib/CAN-Library
+	url = https://github.com/martElectronics/CAN-Library.git
+[submodule "lib/ESP32-Global-Library"]
+	path = lib/ESP32-Global-Library
+	url = https://github.com/martElectronics/ESP32-Global-Library.git

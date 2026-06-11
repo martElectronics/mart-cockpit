@@ -69,6 +69,9 @@ constexpr float    ETA_INV      = 0.95f;    // eficiencia inversor
 constexpr float    P_MAX_W      = 65000.0f; // W — Maximum Wattage del DTI
 constexpr uint8_t  POLE_PAIRS   = 10;       // EMRAX 188 (eRPM = RPM·10)
 constexpr float    V_PACK_MIN_OP = 350.0f;  // V — mínimo operativo (⚠ 292 para 10 módulos)
+constexpr float    V_PACK_RAMP_V = 15.0f;   // V — ancho de rampa de par sobre Vmin: corte SUAVE
+                                            //     (par pleno en Vmin+ramp, nulo en Vmin) para no
+                                            //     dar tirones con el sag del pack bajo carga.
 
 // --- Sensores nuevos (⚠ CALIBRAR con datos reales) ---
 // Dirección (PSC-360 string pot): cuentas ADC en tope izquierda / centro / derecha.

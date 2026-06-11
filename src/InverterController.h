@@ -56,8 +56,10 @@ public:
   // Retira todos los comandos (modo seguro): el inversor deja de recibir y entra
   // en timeout → free running.
   void stop() {
+    // Manda Drive Enable = 0 EXPLÍCITO (desactiva ya, sin depender solo del timeout
+    // del DTI) y retira los comandos de tracción.
     _cmdDriveEN[0] = 0;
-    _can.DataOUT.removePacket(_idCmdEN);
+    _can.setPacket(_idCmdEN, _cmdDriveEN, 1);
     _can.DataOUT.removePacket(_idCmdCurrent);
     _can.DataOUT.removePacket(_idCmdMaxAC);
     _can.DataOUT.removePacket(_idCmdMaxDC);

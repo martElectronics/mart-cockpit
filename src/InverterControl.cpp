@@ -57,10 +57,18 @@ void controlInverter() {
   // fusible/Max Wattage al voltaje actual. Solo con telemetría fresca y plausible
   // del inversor; si falta, se delega en los límites internos del DTI.
   if (inverter.isFresh(INVERTER_WD_MS) && inverter.dcVoltage() > 10.0f) {
-    float iAcMax = powerLimiter.maxAcCurrent(inverter.dcVoltage(), inverter.erpm());
+    float vdc    = inverter.dcVoltage();
+    float iAcMax = powerLimiter.maxAcCurrent(vdc, inverter.erpm());
     int   cap    = (int)((iAcMax / (float)cfgCurrentACMAX) * 1000.0f);
     if (appsThrottle > cap) appsThrottle = cap;
-    if (inverter.dcVoltage() < cfgVPackMinOp) appsThrottle = 0;   // subtensión → sin par
+    // Subtensión con corte SUAVE (rampa) en vez de corte duro: par pleno en
+    // Vmin+ramp, par nulo en Vmin. Evita el tironeo cuando el pack hace sag bajo
+    // carga (cae por debajo → corta → recupera → vuelve → cae...).
+    if (vdc < cfgVPackMinOp) {
+      appsThrottle = 0;
+    } else if (vdc < cfgVPackMinOp + cfgVPackRampV) {
+      appsThrottle = (int)(appsThrottle * ((vdc - cfgVPackMinOp) / cfgVPackRampV));
+    }
   }
 
   stsR2D = r2dSM.update(stsSDC, stsStart, (stsBrake2 >= cfgBrakeTH));
@@ -69,7 +77,13 @@ void controlInverter() {
   // Una sola condición gobierna TANTO el pin digital DriveEnable COMO el comando CAN.
   // (Antes el pin seguía a stsR2D a secas e ignoraba el APPS en modo CAN.)
   bool inverterFault = inverter.hasFault();
-  bool driveEnabled  = stsR2D && appsOk && !inverterFault;
+  // En modo CAN el par exige telemetría FRESCA del inversor: si deja de transmitir,
+  // hasFault() devuelve el último fault conocido (probablemente 0) y driveEnabled
+  // quedaría true → sendCommands() remete los paquetes y pone el pin a HIGH, y acto
+  // seguido watchdogCAN() los retira y lo baja: aleteo cada ciclo. Incluir la frescura
+  // aquí lo evita y deja watchdogCAN() como cinturón redundante.
+  bool invAlive      = (controlMode != MODE_CAN) || inverter.isFresh(INVERTER_WD_MS);
+  bool driveEnabled  = stsR2D && appsOk && !inverterFault && invAlive;
 
   digitalWrite(pinR2D_Digital, driveEnabled ? HIGH : LOW);
 

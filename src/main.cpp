@@ -78,6 +78,7 @@ static uint8_t readResetCause() {
 
 void setup() {
   Serial.begin(115200);                 // Inicializa puerto serie para debug.
+  Serial.setTimeout(50);                // parseInt() no bloquea 1 s con ruido en el USART.
   resetCause = readResetCause();        // Causa del último reset (antes de tocar nada).
   lastDebug = millis();                 // Marca de tiempo inicial para debug.
   lastBMSMsg = millis();                // Marca de tiempo inicial para watchdog del BMS (SDC).

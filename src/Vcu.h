@@ -86,6 +86,7 @@ constexpr float cfgEtaInv      = cfg::ETA_INV;       // eficiencia del inversor 
 constexpr float cfgPMaxW       = cfg::P_MAX_W;       // W — Maximum Wattage configurado en el DTI
 constexpr uint8_t cfgPolePairs = cfg::POLE_PAIRS;    // pares de polos (eRPM = RPM_mec × pares)
 constexpr float cfgVPackMinOp  = cfg::V_PACK_MIN_OP; // V — mínimo operativo; por debajo → corte de par
+constexpr float cfgVPackRampV  = cfg::V_PACK_RAMP_V; // V — ancho de rampa de subtensión (corte suave)
 
 // --------- Modo de control ---------
 enum ControlMode { MODE_CAN, MODE_DIRECT };
