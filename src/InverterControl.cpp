@@ -64,11 +64,7 @@ void controlInverter() {
     // Subtensión con corte SUAVE (rampa) en vez de corte duro: par pleno en
     // Vmin+ramp, par nulo en Vmin. Evita el tironeo cuando el pack hace sag bajo
     // carga (cae por debajo → corta → recupera → vuelve → cae...).
-    if (vdc < cfgVPackMinOp) {
-      appsThrottle = 0;
-    } else if (vdc < cfgVPackMinOp + cfgVPackRampV) {
-      appsThrottle = (int)(appsThrottle * ((vdc - cfgVPackMinOp) / cfgVPackRampV));
-    }
+    appsThrottle = (int)(appsThrottle * underVoltageScale(vdc, cfgVPackMinOp, cfgVPackRampV));
   }
 
   stsR2D = r2dSM.update(stsSDC, stsStart, (stsBrake2 >= cfgBrakeTH));

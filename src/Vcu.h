@@ -18,6 +18,7 @@
 #include "R2DStateMachine.h"
 #include "SteeringSensor.h"
 #include "WheelSpeed.h"
+#include "SafetyLogic.h"   // funciones puras (watchdog BMS, rampa subtensión) — testeables en native
 
 // --------- Centinelas "no usado" para los paquetes del inversor ---------
 #define UNUSED_BYTE  0xFF

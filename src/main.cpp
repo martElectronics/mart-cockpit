@@ -129,7 +129,7 @@ void loop() {
       lastBMSMsg = millis();
       stsSDC = (canBMSStatus[0] >> BMS_SDC_BIT) & 0x01;
     }
-    if ((millis() - lastBMSMsg) > BMS_WD_MS) {
+    if (bmsWatchdogExpired(lastBMSMsg, millis(), BMS_WD_MS)) {
       stsSDC = false;   // fail-safe: sin tramas del BMS, el SDC no se considera presente
     }
 
