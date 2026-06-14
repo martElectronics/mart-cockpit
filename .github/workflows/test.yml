@@ -1,0 +1,64 @@
+name: tests
+
+# En cada push y PR: (1) corre los tests unitarios nativos (lógica pura, sin HW)
+# y (2) compila el firmware STM32. Los runners de GitHub (ubuntu-latest) traen
+# gcc/g++ para los tests; PlatformIO descarga el toolchain ARM para el build.
+#
+# ── SUBMÓDULOS ───────────────────────────────────────────────────────────────
+# El VCU usa dos submódulos: CAN-Library (público) y ESP32-Global-Library
+# (PRIVADO). El GITHUB_TOKEN por defecto solo da acceso a ESTE repo, así que para
+# clonar el submódulo privado hace falta un PAT guardado como secreto del repo:
+#   Settings > Secrets and variables > Actions > New repository secret
+#     Nombre:  SUBMODULE_TOKEN
+#     Valor:   un PAT (fine-grained o classic) con permiso de LECTURA sobre
+#              martElectronics/ESP32-Global-Library (y CAN-Library).
+# Sin ese secreto, el checkout del submódulo privado falla (el resto sí clona).
+#
+# ── build_dir ────────────────────────────────────────────────────────────────
+# El platformio.ini fija build_dir a una ruta Windows (C:/…) para esquivar el
+# fallo del linker por la carpeta con acento en local. En el runner Linux esa
+# ruta no vale, así que la sobreescribimos con PLATFORMIO_BUILD_DIR (la env var
+# tiene precedencia sobre el .ini).
+on:
+  push:
+  pull_request:
+
+env:
+  PLATFORMIO_BUILD_DIR: /tmp/pio-build
+
+jobs:
+  native-tests:
+    name: Tests nativos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (con submódulos)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+      - name: Run native unit tests
+        run: pio test -e native_test -v
+
+  build:
+    name: Compila firmware (STM32)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (con submódulos)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+      - name: Compilar firmware (default_envs)
+        run: pio run
