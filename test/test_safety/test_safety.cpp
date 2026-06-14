@@ -19,7 +19,7 @@ void setUp(void)    {}
 void tearDown(void) {}
 
 // ---------- #2 Watchdog del BMS ----------
-static const unsigned long WD = 2500;   // BMS_WD_MS real
+static const uint32_t WD = 2500;   // BMS_WD_MS real
 
 void test_wd_fresh_not_expired(void) {
     // Trama recién recibida (now == last): no expira.
@@ -52,11 +52,12 @@ void test_wd_silence_trips(void) {
 }
 
 void test_wd_millis_wrap(void) {
-    // Robustez ante el wrap de millis(): last cerca de UINT32_MAX, now ya dio la
-    // vuelta. La resta unsigned da el delta correcto (pequeño) -> no expira.
-    unsigned long last = 0xFFFFFF00UL;   // ~justo antes del wrap
-    unsigned long now  = 0x00000064UL;   // 100 ms después del wrap
-    TEST_ASSERT_FALSE(bmsWatchdogExpired(last, now, WD)); // delta real = 356 ms
+    // Robustez ante el wrap de millis() (uint32_t, ~49 días): last cerca del techo
+    // de 32 bits, now ya dio la vuelta. Con tipos uint32_t la resta envuelve en 32
+    // bits en CUALQUIER host (también LP64), igual que en el STM32 -> delta = 356 ms.
+    uint32_t last = 0xFFFFFF00UL;   // ~justo antes del wrap
+    uint32_t now  = 0x00000064UL;   // 100 ms después del wrap
+    TEST_ASSERT_FALSE(bmsWatchdogExpired(last, now, WD)); // delta real = 0x164 = 356 ms
 }
 
 // ---------- #3 Rampa de subtensión ----------

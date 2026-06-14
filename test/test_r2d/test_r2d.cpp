@@ -94,6 +94,22 @@ void test_buzzer_pulse_duration(void) {
     TEST_ASSERT_EQUAL_UINT8(LOW,  _pinState[PIN_BUZZ]); // cumplida la ventana: se apaga
 }
 
+// 7b) El apagado del buzzer es por polling: si update() no se llama entre el
+//     armado y buzzerOnMs (un loop que tarda), el buzzer se apaga en el SIGUIENTE
+//     update() por tarde que llegue. Documenta el contrato (no es un corte por
+//     tiempo absoluto, sino "se apaga cuando se vuelve a mirar").
+void test_buzzer_off_on_late_update(void) {
+    R2DStateMachine sm(PIN_BUZZ, BUZZ_MS);
+    g_millis = 0;
+    sm.update(true, false, false);
+    sm.update(true, true, true);                 // ACTIVE -> buzzer ON en t=0
+    TEST_ASSERT_EQUAL_UINT8(HIGH, _pinState[PIN_BUZZ]);
+
+    g_millis = 10 * BUZZ_MS;                      // el loop "se cuelga" mucho tiempo
+    sm.update(true, true, true);                 // primer update tardío
+    TEST_ASSERT_EQUAL_UINT8(LOW, _pinState[PIN_BUZZ]); // se apaga al volver a mirar
+}
+
 // 8) reset() vuelve a IDLE (hay que re-secuenciar para volver a armar).
 void test_reset_returns_to_idle(void) {
     R2DStateMachine sm(PIN_BUZZ, BUZZ_MS);
@@ -112,6 +128,7 @@ int main(int, char **) {
     RUN_TEST(test_sdc_loss_drops_and_requires_resequence);
     RUN_TEST(test_r2d_persists_on_brake_release);
     RUN_TEST(test_buzzer_pulse_duration);
+    RUN_TEST(test_buzzer_off_on_late_update);
     RUN_TEST(test_reset_returns_to_idle);
     return UNITY_END();
 }
