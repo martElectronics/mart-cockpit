@@ -124,10 +124,10 @@ uint8_t CANVCUSignals[8];
 
 void configureAPPS()
 {
-  apps1Data.valAnalogUP = 2270;   // 2275
-  apps1Data.valAnalogDOWN = 2030; // 1850
-  apps2Data.valAnalogUP = 924;    // 790
-  apps2Data.valAnalogDOWN = 1920; // 1670
+  apps1Data.valAnalogUP = 2100;   // 2275
+  apps1Data.valAnalogDOWN = 1050; // 1850
+  apps2Data.valAnalogUP = 3350;    // 790
+  apps2Data.valAnalogDOWN = 3650; // 1670
   apps1Data.valScaledUP = apps2Data.valScaledUP = 0;
   apps1Data.valScaledDOWN = apps2Data.valScaledDOWN = 1000;
   apps1Data.range = abs(apps1Data.valAnalogUP - apps1Data.valAnalogDOWN);
