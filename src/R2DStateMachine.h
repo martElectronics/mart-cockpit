@@ -14,7 +14,7 @@ public:
     : _pinBuzzer(pinBuzzer), _buzzerOnMs(buzzerOnMs) {}
 
   // Llamar cada ciclo. Devuelve true si está en Ready-to-Drive.
-  bool update(bool sdc, bool start, bool brake) {
+  bool update(bool sdc, bool start, bool brake, bool appsFault) {
     if ((millis() - _tBuzz) >= _buzzerOnMs) digitalWrite(_pinBuzzer, LOW);  // apaga el buzzer
 
     switch (_step) {
@@ -23,7 +23,7 @@ public:
         break;
       case Step::WAIT:
         if (!sdc) _step = Step::IDLE;                 // se cayó el SDC → reposo
-        else if (start && brake) {                    // Start con freno pisado → R2D
+        else if (start && brake && !appsFault) {                    // Start con freno pisado → R2D
           _tBuzz = millis();
           digitalWrite(_pinBuzzer, HIGH);             // pitido de R2D
           _step = Step::ACTIVE;
@@ -31,6 +31,7 @@ public:
         break;
       case Step::ACTIVE:
         if (!sdc) _step = Step::IDLE;                 // se cayó el SDC → reposo
+        else if(appsFault) _step = Step::WAIT;
         break;
     }
     return _step == Step::ACTIVE;

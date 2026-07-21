@@ -67,7 +67,7 @@ void controlInverter() {
     appsThrottle = (int)(appsThrottle * underVoltageScale(vdc, cfgVPackMinOp, cfgVPackRampV));
   }
 
-  stsR2D = r2dSM.update(stsSDC, stsStart, (stsBrake2 >= cfgBrakeTH));
+  stsR2D = r2dSM.update(stsSDC, stsStart, (stsBrake2 >= cfgBrakeTH), !appsOk);
 
   // ---- Fuente única de verdad para habilitar par ----
   // Una sola condición gobierna TANTO el pin digital DriveEnable COMO el comando CAN.
