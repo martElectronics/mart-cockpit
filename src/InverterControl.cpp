@@ -4,15 +4,15 @@
 PairedAnalogSensorConfig buildAppsConfig() {
   PairedAnalogSensorConfig c;
   // APPS1 (normal: el ADC sube con el pedal). Reposo 1055 -> Fondo 1935.
-  c.cfgSensor1.cfgAdcMinNormal    = 1055;
-  c.cfgSensor1.cfgAdcMaxNormal    = 1935;
+  c.cfgSensor1.cfgAdcMinNormal    = 850;
+  c.cfgSensor1.cfgAdcMaxNormal    = 1900;
   c.cfgSensor1.cfgScaledOutputMin = 0;
   c.cfgSensor1.cfgScaledOutputMax = 1000;
   c.cfgSensor1.cfgFilterType      = FilterType::EWMA;
   c.cfgSensor1.cfgFilterAlpha     = 0.2;
   // APPS2 (INVERSO: el ADC baja con el pedal). Reposo 2290 -> Fondo 2068.
-  c.cfgSensor2.cfgAdcMinNormal    = 2290;
-  c.cfgSensor2.cfgAdcMaxNormal    = 2068;
+  c.cfgSensor2.cfgAdcMinNormal    = 3400;
+  c.cfgSensor2.cfgAdcMaxNormal    = 3160;
   c.cfgSensor2.cfgScaledOutputMin = 0;
   c.cfgSensor2.cfgScaledOutputMax = 1000;
   c.cfgSensor2.cfgFilterType      = FilterType::EWMA;
